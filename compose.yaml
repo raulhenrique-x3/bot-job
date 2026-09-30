@@ -1,0 +1,15 @@
+services:
+  jobbot:
+    build: .
+    image: bot-job:latest
+    container_name: jobbot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./state:/app/state
+      - ./resumes:/app/resumes:ro
+      - ${HOME}/.local/bin/agy:/opt/agy/agy:ro
+      - ${HOME}/.gemini:/home/botuser/.gemini
+    environment:
+      HOME: /home/botuser

@@ -1,0 +1,27 @@
+# Local config / secrets
+.env
+
+# Runtime artifacts (sessions, DB, generated profiles, logs)
+state/
+data/
+logs/
+*.db
+*.sqlite*
+
+# Personal resumes — never publish
+resumes/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

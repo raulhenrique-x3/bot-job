@@ -1,0 +1,13 @@
+[Unit]
+Description=job-bot scrape+analyze run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+WorkingDirectory=/home/%i/projetos/bot-job
+ExecStart=/home/%i/projetos/bot-job/.venv/bin/python -m bot.main
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle

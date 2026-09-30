@@ -1,0 +1,11 @@
+[Unit]
+Description=Run jobbot every SCRAPE_INTERVAL
+
+[Timer]
+# Every 30 min by default; adjust OnCalendar as preferred
+OnCalendar=*-*-* *:15/30:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
