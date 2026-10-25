@@ -13,6 +13,7 @@ from bot.filters.filters import (
 )
 from bot.gemini.analysis import JobAnalyzer
 from bot.profile import ResumeLibrary
+from bot.scrapers.devagas import DevagasScraper
 from bot.scrapers.geekhunter import GeekHunterScraper
 from bot.scrapers.linkedin import LinkedInScraper
 from bot.scrapers.nerdin import NerdinScraper
@@ -48,6 +49,8 @@ def build_scrapers(browser, max_age_days: int) -> list:
         )
     if env_bool("QUEROVAGAS_ENABLED", True):
         scrapers.append(QueroVagasScraper(browser, work_mode=env("QUEROVAGAS_WORK_MODE", "Remote")))
+    if env_bool("DEVAGAS_ENABLED", True):
+        scrapers.append(DevagasScraper())
     if env_bool("NERDIN_ENABLED", True):
         scrapers.append(NerdinScraper(browser))
     return scrapers

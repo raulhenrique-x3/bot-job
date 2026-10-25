@@ -18,7 +18,7 @@ Regras absolutas:
 """
 
 ANALYSIS_USER = """\
-# PERFIL DO CANDIDATO (4 currículos)
+# PERFIL DO CANDIDATO ({resume_count} currículos)
 
 {resumes}
 
@@ -35,10 +35,10 @@ DESCRIÇÃO:
 
 # TAREFA
 
-1. Compare a vaga com a experiência REAL do candidato (consolidando os 4
-   currículos — eles são variações do mesmo profissional: front-end e fullstack).
+1. Compare a vaga com a experiência REAL do candidato (consolidando os
+   {resume_count} currículos — eles são variações do mesmo profissional).
 2. Determine o match geral (0-100).
-3. Escolha qual dos 4 currículos (pela "RESUME KEY") tem a maior aderência
+3. Escolha qual currículo (pela "RESUME KEY") tem a maior aderência
    a ESTA vaga específica.
 4. Liste habilidades do currículo que casam com a vaga e as que faltam.
 5. Dê sugestões PRÁTICAS de ajuste apenas no currículo escolhido para

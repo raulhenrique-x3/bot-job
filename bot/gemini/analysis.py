@@ -91,6 +91,7 @@ class JobAnalyzer:
     def _prompt_kwargs(self, job: dict) -> dict:
         return {
             "resumes": self._resumes.as_prompt_block(),
+            "resume_count": self._resumes.count,
             "source": job.get("source", ""),
             "title": job.get("title", ""),
             "company": job.get("company", ""),
