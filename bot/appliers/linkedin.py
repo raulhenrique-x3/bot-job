@@ -147,6 +147,13 @@ class LinkedInApplier(PlatformApplier):
             try:
                 apply_btn.click(timeout=5000)
                 page.wait_for_selector(modal_selector, timeout=8000)
+                # Wait for SDUI Easy Apply modal body (inputs/buttons) to finish hydrating
+                try:
+                    page.locator(modal_selector).first.locator("input, select, textarea, button[type='submit']").first.wait_for(
+                        state="visible", timeout=6000
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 page.wait_for_timeout(1200)
             except Exception as exc:  # noqa: BLE001
                 return ApplicationOutcome(

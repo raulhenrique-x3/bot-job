@@ -1036,11 +1036,19 @@ class PlaywrightFormFiller:
 
     @staticmethod
     def _iter_buttons(page: Any, scope_selector: str | None = None):
-        prefix = f"{scope_selector} " if scope_selector else ""
-        # Check form buttons first, then general buttons (for React/Ashby without <form>)
-        locator = page.locator(
-            f"{prefix}form button, {prefix}form input[type='submit'], {prefix}button[type='submit'], {prefix}button"
-        )
+        targets = ("form button", "form input[type='submit']", "button[type='submit']", "button")
+        if scope_selector:
+            # Scope safely even when scope_selector is a comma-separated CSS selector list
+            # (naive string prefixing breaks CSS precedence: "a, b button" != "a button, b button").
+            root = page.locator(scope_selector).first
+            if hasattr(root, "locator"):
+                locator = root.locator(", ".join(targets))
+            else:
+                parts = [s.strip() for s in scope_selector.split(",") if s.strip()]
+                combined = ", ".join(f"{p} {t}" for p in parts for t in targets)
+                locator = page.locator(combined)
+        else:
+            locator = page.locator(", ".join(targets))
         count = min(locator.count(), 30)
         for i in range(count):
             yield locator.nth(i)
