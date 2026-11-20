@@ -438,3 +438,128 @@ def test_unemployed_status_answered_truthfully_in_en_and_pt():
     ) == "Não"
 
     assert "desempregado" in profile.as_verified_facts_text().lower()
+
+
+def test_consent_checkbox_id_inside_form_and_disabled_submit_handling(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.documents.pdf_renderer import render_resume_pdf
+
+    pdf_path = tmp_path / "resume.pdf"
+    render_resume_pdf(
+        {
+            "full_name": "Raul Henrique",
+            "headline": "Fullstack Engineer",
+            "contact_line": "Recife, PE | raul@example.com",
+            "summary": "Desenvolvedor Fullstack.",
+            "skills": [{"category": "Stack", "items": ["Python"]}],
+            "experience": [],
+            "education": [],
+            "languages": ["Português"],
+        },
+        pdf_path,
+        language="pt",
+    )
+    profile = CandidateProfile(full_name="Raul Henrique", email="raul@example.com")
+
+    # 1. Form with id="pool-consent" checkbox that enables the submit button (HCODE pattern)
+    html_consent = """
+    <html><body>
+      <form onsubmit="event.preventDefault(); document.body.innerHTML='<h1>Candidatura enviada com sucesso!</h1>';">
+        <label for="nome">Nome completo</label><input id="nome" name="name" required />
+        <label for="mail">Email</label><input id="mail" name="email" type="email" required />
+        <label>
+          <input id="pool-consent" type="checkbox" onchange="document.getElementById('btn').disabled = !this.checked;" />
+          <span>Li e concordo com o tratamento dos meus dados conforme a LGPD e a Política de Privacidade.</span>
+        </label>
+        <button id="btn" type="submit" disabled>Enviar candidatura</button>
+      </form>
+    </body></html>
+    """
+
+    # 2. Form whose submit button stays permanently disabled -> pending_human_action (not timeout)
+    html_stuck_disabled = """
+    <html><body>
+      <form>
+        <label for="nome">Nome completo</label><input id="nome" name="name" required />
+        <label for="mail">Email</label><input id="mail" name="email" type="email" required />
+        <button id="btn" type="submit" disabled>Enviar candidatura</button>
+      </form>
+    </body></html>
+    """
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=False, allow_salary_web=False)
+
+        page1 = browser.new_page()
+        page1.set_content(html_consent)
+        out1 = filler.run_on_page(
+            page1,
+            platform="generic",
+            apply_url="https://hcode.com.br/trabalhe-conosco/dev",
+            job={"id": "hc:1", "title": "Dev"},
+            documents=ApplicationDocuments(resume_pdf=str(pdf_path), resume_md=""),
+            dry_run=False,
+        )
+        page1.close()
+
+        page2 = browser.new_page()
+        page2.set_content(html_stuck_disabled)
+        out2 = filler.run_on_page(
+            page2,
+            platform="generic",
+            apply_url="https://example.com/apply",
+            job={"id": "hc:2", "title": "Dev"},
+            documents=ApplicationDocuments(resume_pdf=str(pdf_path), resume_md=""),
+            dry_run=False,
+        )
+        page2.close()
+        browser.close()
+
+    assert out1.status == "applied"
+    assert out2.status == "pending_human_action"
+    assert "desabilitado" in out2.reason.lower()
+
+
+def test_portal_expired_detection_and_devagas_removed():
+    from bot.appliers.portals import NerdinApplier, ProgramathorApplier
+    from bot.main import build_scrapers
+
+    class _FakePage:
+        def __init__(self, title: str, body: str):
+            self._title = title
+            self._body = body
+
+        def title(self):
+            return self._title
+
+        def inner_text(self, _sel):
+            return self._body
+
+        def locator(self, _sel):
+            return self
+
+        def count(self):
+            return 1
+
+    nerdin = NerdinApplier()
+    assert nerdin._is_expired_page(
+        _FakePage("Vaga indisponível para candidatura - Nerdin", "Esta vaga não está aceitando novas candidaturas.")
+    ) is True
+    assert nerdin._is_expired_page(
+        _FakePage("Vaga Dev - Nerdin", "No momento, não estamos aceitando novas candidaturas para esta vaga.")
+    ) is True
+    assert nerdin._is_expired_page(
+        _FakePage("Quero me Candidatar - Nerdin", "Preencha seus dados para se candidatar.")
+    ) is False
+
+    pt = ProgramathorApplier()
+    assert pt._is_expired_page(_FakePage("Página não disponível (404)", "Erro 404")) is True
+    assert pt._is_expired_page(_FakePage("Vaga Dev Full Stack - Programathor", "Quero me candidatar")) is False
+
+    scrapers = build_scrapers(browser=None, max_age_days=14)
+    names = [s.name for s in scrapers]
+    assert "devagas" not in names
+    assert set(names) == {"programathor", "geekhunter", "linkedin", "querovagas", "nerdin"}

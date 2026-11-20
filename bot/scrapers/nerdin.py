@@ -12,7 +12,11 @@ logger = logging.getLogger("jobbot.scrapers.nerdin")
 
 BASE = "https://www.nerdin.com.br"
 LISTING = BASE + "/vagas-desenvolvedor-sistemas.php"
-EXPIRED_RE = re.compile(r"VENCIDA|ENCERRADA|EXPIRADA", re.IGNORECASE)
+EXPIRED_RE = re.compile(
+    r"VENCIDA|ENCERRADA|EXPIRADA|n[ãa]o estamos aceitando novas candidaturas|"
+    r"n[ãa]o est[áa] aceitando novas candidaturas|vaga indispon[íi]vel|candidatura indispon[íi]vel",
+    re.IGNORECASE,
+)
 
 
 class NerdinScraper(JobSource):
@@ -169,7 +173,8 @@ class NerdinScraper(JobSource):
         with goto(self._browser, url) as page:
             if page is None:
                 return detail
+            title = page.title() or ""
             text = page.inner_text("body")
-            detail["expired"] = bool(EXPIRED_RE.search(text[:2000]))
+            detail["expired"] = bool(EXPIRED_RE.search(f"{title}\n{text[:3000]}"))
             detail["body"] = text[:8000]
         return detail

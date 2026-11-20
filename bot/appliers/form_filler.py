@@ -719,6 +719,24 @@ class PlaywrightFormFiller:
                 dry_run=False,
             )
 
+        # If the submit button is still disabled after filling, wait briefly for client-side validation
+        # and escalate cleanly to pending_human_action instead of timing out across retries.
+        try:
+            if submit_btn.is_disabled():
+                page.wait_for_timeout(500)
+                if submit_btn.is_disabled():
+                    return ApplicationOutcome(
+                        status="pending_human_action",
+                        platform=platform,
+                        apply_url=page.url or current_url,
+                        reason="Botão de envio permaneceu desabilitado após preenchimento do formulário. Verifique manualmente.",
+                        cover_letter_requested=cover_letter_requested,
+                        filled_fields=filled_fields,
+                        dry_run=False,
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
         try:
             submit_btn.click(timeout=8000)
         except Exception as exc:  # noqa: BLE001
@@ -813,8 +831,12 @@ class PlaywrightFormFiller:
                 if (el.disabled) continue;
 
                 // Exclude header/nav/footer/cookie-banner inputs unless inside a chosen modal scope
-                if (!scopeSel && el.closest('header, nav, footer, [id*="cookie" i], [class*="cookie" i], [id*="consent" i]')) {
-                    continue;
+                if (!scopeSel) {
+                    if (el.closest('header, nav, footer')) continue;
+                    const banner = el.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i]');
+                    if (banner && banner !== el && !(type === 'checkbox' && el.closest('form'))) {
+                        continue;
+                    }
                 }
 
                 const style = window.getComputedStyle(el);
@@ -879,8 +901,8 @@ class PlaywrightFormFiller:
 
                 const noiseCheck = `${el.id || ''} ${el.name || ''} ${label}`;
                 if (type !== 'file' && IGNORE_NOISE.test(noiseCheck)) {
-                    // Allow privacy/terms checkbox even if it mentions LGPD/cookies in terms text
-                    if (!(type === 'checkbox' && /(privacidade|privacy|termos|terms)/i.test(label))) {
+                    // Allow privacy/terms/LGPD consent checkbox even if id/name/label contains "consent" or "cookies"
+                    if (!(type === 'checkbox' && /(privacidade|privacy|termos|terms|lgpd|tratamento dos meus dados|concordo)/i.test(label))) {
                         continue;
                     }
                 }

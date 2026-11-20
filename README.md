@@ -10,11 +10,11 @@ Agente automatizado de descoberta, análise, geração de documentos ATS e candi
 ```
 ┌────────────┐   ┌───────────┐   ┌──────────┐   ┌────────────┐   ┌────────────┐   ┌──────────┐
 │  Scrapers  │ → │  Filtros  │ → │ Análise  │ → │ Documentos │ → │ Candidatura│ → │ Telegram │
-│ 6 portais  │   │ + dedupe  │   │ IA (Neon)│   │ ATS (PDF)  │   │ (API/Web)  │   │ + PDFs   │
+│ 5 portais  │   │ + dedupe  │   │ IA (Neon)│   │ ATS (PDF)  │   │ (API/Web)  │   │ + PDFs   │
 └────────────┘   └───────────┘   └──────────┘   └────────────┘   └────────────┘   └──────────┘
 ```
 
-1. **Coleta (6 portais)** — Programathor, GeekHunter, LinkedIn, QueroVagas Tech, DevAgas e Nerdin.
+1. **Coleta (5 portais)** — Programathor, GeekHunter, LinkedIn, QueroVagas Tech e Nerdin.
 2. **Filtros e deduplicação** — Idade máxima da vaga, palavras-chave/empresas bloqueadas, níveis bloqueados e dedupe por ID + SHA-1 (`título|empresa`).
 3. **Análise inteligente com IA (`gemini-4-neon-medium`, effort `medium`)** — Avalia compatibilidade técnica, experiência real, senioridade, stack obrigatória/desejável, requisitos eliminatórios, idioma (`pt`/`en`), modalidade/localização e salário. Vagas incompatíveis ou com blockers eliminatórios são marcadas como `rejected` sem gerar documentos.
 4. **Geração de documentos personalizados (ATS)** — Seleciona o currículo-base em `resumes/`, gera `resume.md` e `resume.pdf` no idioma da vaga (coluna única, sem tabelas/colunas/ícones, validado via `pypdf` e checagem de veracidade de datas/fatos) e gera `cover_letter.md` / `cover_letter.pdf` **somente** quando a plataforma solicita carta de apresentação.
@@ -32,7 +32,7 @@ bot/
 ├── profile.py               # ResumeLibrary (normalização pypdf) + CandidateProfile
 ├── generate_profile.py      # gera state/profile.md + state/profile.json
 ├── login.py                 # login interativo (Playwright) com permissões 0600
-├── scrapers/                # 6 scrapers preservados (Programathor, GeekHunter, LinkedIn, QueroVagas, DevAgas, Nerdin)
+├── scrapers/                # 5 scrapers (Programathor, GeekHunter, LinkedIn, QueroVagas, Nerdin)
 ├── filters/filters.py       # content_hash, is_too_old, passes_pre_filters, detect_language
 ├── gemini/
 │   ├── client.py            # cliente unificado CLI agy (Gemini 4 Neon, Medium, retries)

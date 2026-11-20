@@ -9,7 +9,10 @@ from bot.scrapers.base import JobSource
 logger = logging.getLogger("jobbot.scrapers.programathor")
 
 BASE = "https://programathor.com.br"
-EXPIRED_RE = re.compile(r"VENCIDA|ENCERRADA", re.IGNORECASE)
+EXPIRED_RE = re.compile(
+    r"VENCIDA|ENCERRADA|p[áa]gina n[ãa]o dispon[íi]vel|p[áa]gina n[ãa]o encontrada|vaga n[ãa]o encontrada",
+    re.IGNORECASE,
+)
 REMOTE_RE = re.compile(r"REMOTO|HOME OFFICE", re.IGNORECASE)
 
 
@@ -103,7 +106,8 @@ class ProgramathorScraper(JobSource):
         with goto(self._browser, url) as page:
             if page is None:
                 return detail
+            title = page.title() or ""
             text = page.inner_text("body")
-            detail["expired"] = bool(EXPIRED_RE.search(text[:2000]))
+            detail["expired"] = "404" in title or bool(EXPIRED_RE.search(f"{title}\n{text[:3000]}"))
             detail["body"] = text[:8000]
         return detail

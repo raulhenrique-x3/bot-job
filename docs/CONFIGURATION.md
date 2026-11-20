@@ -63,7 +63,6 @@ Copie `.env.example` para `.env` e ajuste os parâmetros desejados.
 | `GEEKHUNTER_ENABLED` | `true` | Habilita scraper GeekHunter |
 | `LINKEDIN_ENABLED` | `true` | Habilita scraper LinkedIn |
 | `QUEROVAGAS_ENABLED` | `true` | Habilita scraper QueroVagas |
-| `DEVAGAS_ENABLED` | `true` | Habilita scraper DevAgas |
 | `NERDIN_ENABLED` | `true` | Habilita scraper Nerdin |
 | `QUEROVAGAS_WORK_MODE` | `Remote` | Filtro de modalidade QueroVagas |
 | `LINKEDIN_SEARCH_TERMS` | `desenvolvedor` | Termos separados por vírgula |

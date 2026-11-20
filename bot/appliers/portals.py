@@ -26,7 +26,41 @@ class _BrazilianPortalApplier(PlatformApplier):
     """Shared safe Playwright base for Brazilian job boards."""
 
     domain_marker: str = ""
-    expired_markers: tuple[str, ...] = ("vencida", "encerrada", "expirada", "não aceita mais")
+    expired_markers: tuple[str, ...] = (
+        "vencida",
+        "encerrada",
+        "expirada",
+        "não aceita mais",
+        "não estamos aceitando novas candidaturas",
+        "não está aceitando novas candidaturas",
+        "candidatura indisponível",
+        "vaga indisponível",
+        "vaga não encontrada",
+        "página não disponível",
+        "página não encontrada",
+        "page not found",
+    )
+    expired_title_markers: tuple[str, ...] = (
+        "404",
+        "não disponível",
+        "indisponível",
+        "não encontrada",
+        "not found",
+        "encerrada",
+        "expirada",
+    )
+
+    def _is_expired_page(self, page, body_text: str | None = None) -> bool:
+        try:
+            title_lower = (page.title() or "").lower()
+        except Exception:  # noqa: BLE001
+            title_lower = ""
+        if any(m in title_lower for m in self.expired_title_markers):
+            return True
+        if body_text is None:
+            body_text = page.inner_text("body") if page.locator("body").count() else ""
+        head_lower = body_text[:3000].lower()
+        return any(m in head_lower for m in self.expired_markers)
 
     def can_handle(self, apply_url: str, job: dict) -> bool:
         return self.domain_marker in (apply_url or "").lower()
@@ -74,14 +108,13 @@ class _BrazilianPortalApplier(PlatformApplier):
 
             current_url = page.url or apply_url
             body_text = page.inner_text("body") if page.locator("body").count() else ""
-            head_lower = body_text[:3000].lower()
 
-            if any(m in head_lower for m in self.expired_markers):
+            if self._is_expired_page(page, body_text):
                 return ApplicationOutcome(
                     status="expired",
                     platform=self.platform_name,
                     apply_url=current_url,
-                    reason=f"Vaga encerrada em {self.platform_name}.",
+                    reason=f"Vaga encerrada ou indisponível em {self.platform_name}.",
                     dry_run=dry_run,
                 )
 
@@ -105,6 +138,15 @@ class _BrazilianPortalApplier(PlatformApplier):
                     platform=self.platform_name,
                     apply_url=page.url or current_url,
                     reason=block_reason or f"Não foi possível abrir o formulário em {self.platform_name}.",
+                    dry_run=dry_run,
+                )
+
+            if self._is_expired_page(page):
+                return ApplicationOutcome(
+                    status="expired",
+                    platform=self.platform_name,
+                    apply_url=page.url or current_url,
+                    reason=f"Vaga encerrada ou indisponível em {self.platform_name}.",
                     dry_run=dry_run,
                 )
 
