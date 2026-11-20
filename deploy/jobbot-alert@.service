@@ -1,0 +1,6 @@
+[Unit]
+Description=Telegram alert for failed unit %i
+
+[Service]
+Type=oneshot
+ExecStart=/root/bot-job/deploy/notify_failure.sh %i

@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 from bot.appliers import ApplicationDocuments, ApplierRegistry
@@ -44,6 +45,29 @@ from bot.telegram.format import (
 )
 
 logger = logging.getLogger("jobbot.main")
+
+
+def _alert_marker_dir() -> Path:
+    return Path("state/alerts")
+
+
+def _alert_once(telegram, key: str, title: str, detail: str) -> bool:
+    """Send a Telegram alert once per condition; repeats only after _clear_alert."""
+    marker = _alert_marker_dir() / key
+    if marker.exists():
+        return False
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    sent = telegram.send_alert(format_failure_alert(title, detail))
+    if sent:
+        marker.write_text("sent", encoding="utf-8")
+    return sent
+
+
+def _clear_alert(key: str) -> None:
+    try:
+        (_alert_marker_dir() / key).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def build_scrapers(browser, max_age_days: int) -> list:
@@ -447,6 +471,19 @@ def _run_cycle(
 
         # 3. Scrape, deduplicate, pre-filter, persist
         all_jobs = collect_jobs(scrapers)
+        collected_by = Counter(job.get("source") for job in all_jobs)
+        for scraper in scrapers:
+            name = scraper.name
+            if getattr(scraper, "session_lost", False):
+                _alert_once(
+                    telegram,
+                    f"session_{name}",
+                    f"Sessão expirada ({name})",
+                    f"O portal {name} está sendo acessado sem autenticação. "
+                    f"Reexecute no VPS: `python -m bot.login {name}`",
+                )
+            elif collected_by.get(name, 0) > 0:
+                _clear_alert(f"session_{name}")
         fresh = dedup_and_filter(all_jobs, db, cfg.job_max_age_days)
         summary["collected"] = len(all_jobs)
         summary["fresh"] = len(fresh)
@@ -465,7 +502,15 @@ def _run_cycle(
             candidate_profile=profile,
             default_language=cfg.default_language,
         )
+        if analyzer.ready:
+            _clear_alert("analyzer_down")
         if not analyzer.ready:
+            _alert_once(
+                telegram,
+                "analyzer_down",
+                "Analisador IA indisponível",
+                "O CLI `agy` não respondeu ou não está no PATH — ciclos seguem sem análise/candidatura até resolver.",
+            )
             logger.warning("analyzer unavailable — finishing cycle without AI stages")
             return summary
 
@@ -582,5 +627,16 @@ def _run_cycle(
 
 
 if __name__ == "__main__":
-    res = run_once()
+    try:
+        res = run_once()
+    except Exception as exc:  # noqa: BLE001
+        load_env(os.path.join(os.path.dirname(__file__), "..", ".env"))
+        setup_logging()
+        TelegramClient().send_alert(
+            format_failure_alert(
+                "Ciclo do bot-job falhou",
+                f"{type(exc).__name__}: {exc}",
+            )
+        )
+        raise
     sys.exit(0 if res is not None else 1)

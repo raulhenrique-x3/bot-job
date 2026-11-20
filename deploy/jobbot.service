@@ -2,6 +2,7 @@
 Description=job-bot scrape+analyze run
 After=network-online.target
 Wants=network-online.target
+OnFailure=jobbot-alert@%n.service
 
 [Service]
 Type=oneshot

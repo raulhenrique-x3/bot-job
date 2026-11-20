@@ -26,6 +26,7 @@ class LinkedInScraper(JobSource):
         self._terms = [t.strip() for t in search_terms if t.strip()] or ["desenvolvedor"]
         self._max_days = max_days
         self._remote_only = remote_only
+        self.session_lost = False
 
     def scrape(self) -> list[dict]:
         jobs: list[dict] = []
@@ -64,6 +65,7 @@ class LinkedInScraper(JobSource):
                 if page is None:
                     return None
                 if "/authwall" in page.url or "/login" in page.url or "/checkpoint" in page.url:
+                    self.session_lost = True
                     logger.warning("LinkedIn session lost — re-run login script")
                     return None
                 page.wait_for_selector(
