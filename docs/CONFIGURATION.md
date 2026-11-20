@@ -64,6 +64,12 @@ Copie `.env.example` para `.env` e ajuste os parâmetros desejados.
 | `LINKEDIN_ENABLED` | `true` | Habilita scraper LinkedIn |
 | `QUEROVAGAS_ENABLED` | `true` | Habilita scraper QueroVagas |
 | `NERDIN_ENABLED` | `true` | Habilita scraper Nerdin |
+| `REMOTIVE_ENABLED` | `true` | Habilita scraper Remotive (API JSON pública) |
+| `HIMALAYAS_ENABLED` | `true` | Habilita scraper Himalayas (API JSON pública) |
+| `WWR_ENABLED` | `true` | Habilita scraper We Work Remotely (RSS público) |
+| `JOBICY_ENABLED` | `true` | Habilita scraper Jobicy (API JSON v2 pública) |
+| `JOBICY_GEOS` | `latam,anywhere` | Regiões consultadas na API do Jobicy |
+| `WORKINGNOMADS_ENABLED` | `true` | Habilita scraper Working Nomads (API JSON pública) |
 | `QUEROVAGAS_WORK_MODE` | `Remote` | Filtro de modalidade QueroVagas |
 | `LINKEDIN_USE_PROFILE_QUERIES` | `true` | Gera termos de busca do LinkedIn automaticamente a partir do perfil (`state/profile.json`) |
 | `LINKEDIN_EASY_APPLY_ONLY` | `true` | Filtra buscas do LinkedIn apenas para vagas com Easy Apply (`f_AL=true`) |

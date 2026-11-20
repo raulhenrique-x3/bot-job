@@ -562,7 +562,18 @@ def test_portal_expired_detection_and_devagas_removed():
     scrapers = build_scrapers(browser=None, max_age_days=14)
     names = [s.name for s in scrapers]
     assert "devagas" not in names
-    assert set(names) == {"programathor", "geekhunter", "linkedin", "querovagas", "nerdin"}
+    assert set(names) == {
+        "programathor",
+        "geekhunter",
+        "linkedin",
+        "querovagas",
+        "nerdin",
+        "remotive",
+        "himalayas",
+        "weworkremotely",
+        "jobicy",
+        "workingnomads",
+    }
 
 
 def test_linkedin_profile_queries_easy_apply_url_and_mfa_query_param_guard():

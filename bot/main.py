@@ -28,10 +28,17 @@ from bot.documents import (
     sanitize_job_id,
     validate_pdf,
 )
-from bot.filters.filters import content_hash, is_too_old, passes_pre_filters
+from bot.filters.filters import content_hash, international_fit_score, is_too_old, passes_pre_filters
 from bot.gemini.analysis import JobAnalyzer, should_apply
 from bot.profile import CandidateProfile, ResumeLibrary
 from bot.scrapers.geekhunter import GeekHunterScraper
+from bot.scrapers.international import (
+    HimalayasScraper,
+    JobicyScraper,
+    RemotiveScraper,
+    WeWorkRemotelyScraper,
+    WorkingNomadsScraper,
+)
 from bot.scrapers.linkedin import LinkedInScraper, build_profile_search_terms
 from bot.scrapers.nerdin import NerdinScraper
 from bot.scrapers.programathor import ProgramathorScraper
@@ -94,6 +101,16 @@ def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | No
         scrapers.append(QueroVagasScraper(browser, work_mode=env("QUEROVAGAS_WORK_MODE", "Remote")))
     if env_bool("NERDIN_ENABLED", True):
         scrapers.append(NerdinScraper(browser))
+    if env_bool("REMOTIVE_ENABLED", True):
+        scrapers.append(RemotiveScraper())
+    if env_bool("HIMALAYAS_ENABLED", True):
+        scrapers.append(HimalayasScraper())
+    if env_bool("WWR_ENABLED", True):
+        scrapers.append(WeWorkRemotelyScraper())
+    if env_bool("JOBICY_ENABLED", True):
+        scrapers.append(JobicyScraper(geos=env_list("JOBICY_GEOS", "latam,anywhere")))
+    if env_bool("WORKINGNOMADS_ENABLED", True):
+        scrapers.append(WorkingNomadsScraper())
     return scrapers
 
 
@@ -142,6 +159,8 @@ def dedup_and_filter(all_jobs: list[dict], db: Database, max_age_days: int) -> l
         seen.add(jid)
         seen.add(chash)
         fresh.append(job)
+    # Prioritize jobs with positive international/LATAM/Worldwide/contractor signals
+    fresh.sort(key=international_fit_score, reverse=True)
     return fresh
 
 
@@ -536,6 +555,15 @@ def _run_cycle(
                             continue
                         if job["body"]:
                             db.update_job_body(job["id"], job["body"], detail.get("apply_url"))
+                            ok_post, post_reason = passes_pre_filters(job)
+                            if not ok_post:
+                                db.set_status(job["id"], "rejected", post_reason)
+                                summary["rejected"] += 1
+                                logger.info(
+                                    "job filtered after detail fetch",
+                                    extra={"job_id": job["id"], "reason": post_reason},
+                                )
+                                continue
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("detail fetch error", extra={"job_id": job["id"], "error": str(exc)})
 

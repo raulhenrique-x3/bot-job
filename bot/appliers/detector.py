@@ -75,20 +75,44 @@ def resolve_apply_url(job: dict, browser_context=None, timeout_ms: int = 25000) 
             if final_platform != "generic":
                 return final_url, final_platform
             anchors = page.locator("a[href]")
-            count = min(anchors.count(), 40)
+            count = min(anchors.count(), 80)
+            direct_ats_candidate: tuple[str, str] | None = None
+            apply_link_candidate: tuple[str, str] | None = None
             for i in range(count):
                 el = anchors.nth(i)
                 try:
-                    text = (el.inner_text(timeout=500) or "").strip()
                     href = (el.get_attribute("href", timeout=500) or "").strip()
                 except Exception:  # noqa: BLE001
                     continue
                 if not href or href.startswith("#") or href.lower().startswith("javascript:"):
                     continue
-                if _APPLY_LINK_TEXT.search(text):
-                    candidate = urljoin(final_url, href)
-                    cand_platform = detect_platform(candidate, source)
-                    return candidate, cand_platform
+                candidate = urljoin(final_url, href)
+                cand_platform = detect_platform(candidate, source)
+                if cand_platform in ("greenhouse", "lever", "ashby", "workable", "smartrecruiters", "bamboohr"):
+                    direct_ats_candidate = (candidate, cand_platform)
+                    break
+                if apply_link_candidate is None:
+                    try:
+                        text = (el.inner_text(timeout=500) or "").strip()
+                    except Exception:  # noqa: BLE001
+                        text = ""
+                    if _APPLY_LINK_TEXT.search(text):
+                        apply_link_candidate = (candidate, cand_platform)
+
+            if direct_ats_candidate is not None:
+                return direct_ats_candidate
+
+            if apply_link_candidate is not None:
+                cand_url, cand_platform = apply_link_candidate
+                if cand_platform != "generic":
+                    return cand_url, cand_platform
+                # Follow one redirect hop for aggregator outbound links (e.g. /go/, /apply)
+                try:
+                    page.goto(cand_url, wait_until="domcontentloaded", timeout=min(timeout_ms, 15000))
+                    hop_url = page.url or cand_url
+                    return hop_url, detect_platform(hop_url, source)
+                except Exception:  # noqa: BLE001
+                    return cand_url, cand_platform
     except Exception as exc:  # noqa: BLE001
         logger.debug("resolve_apply_url fallback for %s: %s", url, exc)
 

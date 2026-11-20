@@ -26,6 +26,105 @@ _EN_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
+# Phrases that disqualify Brazil/LATAM remote applicants on international boards
+INTERNATIONAL_BLOCKED_PHRASES: tuple[str, ...] = (
+    "us only",
+    "u.s. only",
+    "usa only",
+    "united states only",
+    "us-only",
+    "u.s.-only",
+    "us citizen only",
+    "us citizens only",
+    "u.s. citizen only",
+    "u.s. citizens only",
+    "united states citizens only",
+    "must be authorized to work in the us",
+    "must be authorized to work in the u.s",
+    "must be authorized to work in the united states",
+    "authorized to work in the us without",
+    "authorized to work in the united states",
+    "no visa sponsorship",
+    "without visa sponsorship",
+    "not able to sponsor visas",
+    "unable to sponsor",
+    "w2 only",
+    "w-2 only",
+    "must reside in the us",
+    "must reside in the u.s",
+    "must reside in the united states",
+    "must be located in the us",
+    "must be located in the united states",
+    "us/canada only",
+    "us & canada only",
+    "us and canada only",
+    "canada only",
+    "uk only",
+    "eu only",
+    "europe only",
+    "emea only",
+    "apac only",
+    "australia only",
+)
+
+# Positive signals for international remote roles open to Brazil / LATAM contractors
+INTERNATIONAL_POSITIVE_TERMS: tuple[str, ...] = (
+    "latam",
+    "latin america",
+    "worldwide",
+    "anywhere",
+    "contractor",
+    "b2b",
+    "americas",
+    "south america",
+    "brazil",
+    "brasil",
+    "global",
+)
+
+_POSITIVE_LOCATION_RE = re.compile(
+    r"\b(latam|latin america|worldwide|anywhere|global|americas|south america|brazil|brasil)\b",
+    re.IGNORECASE,
+)
+
+_FOREIGN_ONLY_LOCATION_RE = re.compile(
+    r"\b(usa|u\.s\.a\.?|united states|us|canada|europe|eu|emea|uk|united kingdom|"
+    r"great britain|england|germany|france|spain|italy|netherlands|poland|portugal|"
+    r"ireland|sweden|switzerland|austria|belgium|denmark|norway|finland|czech|"
+    r"australia|new zealand|apac|asia|india|singapore|japan|israel|africa)\b",
+    re.IGNORECASE,
+)
+
+
+def international_fit_score(job: dict) -> int:
+    """Count positive international/LATAM/Worldwide signals to prioritize open remote roles."""
+    haystack = " ".join(
+        str(job.get(k) or "") for k in ("title", "location", "body")
+    ).lower()
+    if not haystack.strip():
+        return 0
+    return sum(1 for term in INTERNATIONAL_POSITIVE_TERMS if term in haystack)
+
+
+def _is_foreign_restricted_location(location: str) -> str | None:
+    """Return a block reason if location explicitly restricts to non-LATAM/non-Brazil regions."""
+    loc = (location or "").strip()
+    if not loc:
+        return None
+    if _POSITIVE_LOCATION_RE.search(loc):
+        return None
+    low = loc.lower()
+    for phrase in INTERNATIONAL_BLOCKED_PHRASES:
+        if phrase in low:
+            return f"restricted location: {phrase}"
+    # If location lists specific foreign countries/regions without any LATAM/Worldwide/Brazil mention
+    if _FOREIGN_ONLY_LOCATION_RE.search(loc):
+        # Ignore generic Brazilian city/state formats or plain "Remote"
+        if re.search(r"\b(remoto|sp|rj|mg|pe|pr|rs|sc|ba|ce|df|go|recife|s[aã]o paulo|rio de janeiro|curitiba|belo horizonte|florian[oó]polis|porto alegre)\b", low):
+            return None
+        return f"restricted location: {loc[:60]}"
+    return None
+
 
 def content_hash(title: str, company: str) -> str:
     t = _TITLE_NOISE.sub("", (title or "").lower())
@@ -79,5 +178,14 @@ def passes_pre_filters(job: dict, blocked_title_keywords: list[str] | None = Non
     for kw in blocked:
         if kw in title_l:
             return False, f"blocked level: {kw}"
+
+    loc_reason = _is_foreign_restricted_location(job.get("location") or "")
+    if loc_reason:
+        return False, loc_reason
+
+    combined = f"{title_l}\n{(job.get('location') or '').lower()}\n{(job.get('body') or '').lower()}"
+    for phrase in INTERNATIONAL_BLOCKED_PHRASES:
+        if phrase in combined:
+            return False, f"international restriction: {phrase}"
 
     return True, ""

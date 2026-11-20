@@ -10,11 +10,11 @@ Agente automatizado de descoberta, análise, geração de documentos ATS e candi
 ```
 ┌────────────┐   ┌───────────┐   ┌──────────┐   ┌────────────┐   ┌────────────┐   ┌──────────┐
 │  Scrapers  │ → │  Filtros  │ → │ Análise  │ → │ Documentos │ → │ Candidatura│ → │ Telegram │
-│ 5 portais  │   │ + dedupe  │   │ IA (Neon)│   │ ATS (PDF)  │   │ (API/Web)  │   │ + PDFs   │
+│ 10 portais │   │ + dedupe  │   │ IA (Neon)│   │ ATS (PDF)  │   │ (API/Web)  │   │ + PDFs   │
 └────────────┘   └───────────┘   └──────────┘   └────────────┘   └────────────┘   └──────────┘
 ```
 
-1. **Coleta (5 portais)** — Programathor, GeekHunter, LinkedIn, QueroVagas Tech e Nerdin.
+1. **Coleta (10 portais)** — Programathor, GeekHunter, LinkedIn, QueroVagas Tech, Nerdin + portais remotos internacionais via API JSON/RSS: Remotive, Himalayas, We Work Remotely, Jobicy e Working Nomads.
 2. **Filtros e deduplicação** — Idade máxima da vaga, palavras-chave/empresas bloqueadas, níveis bloqueados e dedupe por ID + SHA-1 (`título|empresa`).
 3. **Análise inteligente com IA (`gemini-4-neon-medium`, effort `medium`)** — Avalia compatibilidade técnica, experiência real, senioridade, stack obrigatória/desejável, requisitos eliminatórios, idioma (`pt`/`en`), modalidade/localização e salário. Vagas incompatíveis ou com blockers eliminatórios são marcadas como `rejected` sem gerar documentos.
 4. **Geração de documentos personalizados (ATS)** — Seleciona o currículo-base em `resumes/`, gera `resume.md` e `resume.pdf` no idioma da vaga (coluna única, sem tabelas/colunas/ícones, validado via `pypdf` e checagem de veracidade de datas/fatos) e gera `cover_letter.md` / `cover_letter.pdf` **somente** quando a plataforma solicita carta de apresentação.

@@ -149,10 +149,10 @@ def test_end_to_end_live_pipeline_with_rejection_and_idempotency(monkeypatch, te
             "id": "gh:1002",
             "source": "fake_portal",
             "url": "https://boards.greenhouse.io/blocked/jobs/1002",
-            "title": "Senior Rust Kernel Engineer (US Citizen only)",
+            "title": "Senior Rust Kernel Engineer",
             "company": "DefenseCorp",
-            "location": "On-site USA",
-            "body": "Must hold US citizenship and 10 years Rust.",
+            "location": "Remote",
+            "body": "Must have 10 years of Linux kernel Rust experience.",
         },
     ]
     _patch_ai(
