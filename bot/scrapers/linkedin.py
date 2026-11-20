@@ -66,7 +66,10 @@ class LinkedInScraper(JobSource):
                 if "/authwall" in page.url or "/login" in page.url or "/checkpoint" in page.url:
                     logger.warning("LinkedIn session lost — re-run login script")
                     return None
-                page.wait_for_selector("a[href*='/jobs/view/']", timeout=8000)
+                page.wait_for_selector(
+                    "a[href*='/jobs/view/'], [componentkey^='job-card-component-ref-'], li[data-occludable-job-id]",
+                    timeout=10000,
+                )
                 return page.content()
         except PWTimeout:
             logger.warning("LinkedIn search returned no job cards for %s", url)
@@ -77,6 +80,49 @@ class LinkedInScraper(JobSource):
 
         soup = BeautifulSoup(html, "html.parser")
         out: dict[str, dict] = {}
+
+        # Layout 0: 2026 LinkedIn SDUI cards ([componentkey^="job-card-component-ref-"])
+        for card in soup.select("[componentkey^='job-card-component-ref-']"):
+            ckey = card.get("componentkey", "")
+            m = re.search(r"job-card-component-ref-(\d+)", ckey)
+            if not m:
+                continue
+            jid = m.group(1)
+            job_id = f"li:{jid}"
+            if job_id in out:
+                continue
+            lines = [ln.strip() for ln in card.get_text("\n", strip=True).split("\n") if ln.strip()]
+            # Filter accessibility prefixes like "Selecionada, ..." or "(vaga verificada)"
+            clean_lines = [
+                ln for ln in lines
+                if not re.match(r"^(selecionada,|vaga verificada|\(vaga verificada\))$", ln, re.I)
+            ]
+            title = clean_lines[0] if clean_lines else ""
+            title = re.sub(r"^selecionada,\s*", "", title, flags=re.I)
+            title = re.sub(r"\s*\(vaga verificada\)\s*$", "", title, flags=re.I).strip()
+            company = clean_lines[1] if len(clean_lines) > 1 else ""
+            if company.lower() == title.lower() and len(clean_lines) > 2:
+                company = clean_lines[2]
+            location = ""
+            remote = False
+            for ln in clean_lines[1:]:
+                if any(k in ln for k in ("Remoto", "Remote", "Híbrido", "Hybrid", "Presencial", "Brasil", "Brazil")) and len(ln) < 90:
+                    location = ln
+                    remote = bool(re.search(r"remot", ln, re.I))
+                    break
+            out[job_id] = {
+                "source": self.name,
+                "id": job_id,
+                "url": f"{BASE}/jobs/view/{jid}/",
+                "title": title,
+                "company": company,
+                "location": location,
+                "remote": remote,
+                "salary": "",
+                "posted_at": "",
+                "body": "",
+                "guest_html": False,
+            }
 
         # Layout A: guest cards (base-search-card), layout B: logged-in (li[data-occludable-job-id])
         for li in soup.select("li[data-occludable-job-id]"):

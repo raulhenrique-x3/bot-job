@@ -1,10 +1,6 @@
 # bot-job
 
-Bot que monitora vagas de emprego em portais brasileiros, aplica filtros, faz
-análise de compatibilidade com seu currículo usando IA (CLI `agy`) e envia as
-melhores vagas para o Telegram com o currículo recomendado anexado.
-
-**Sem candidatura automática** — o bot só avisa; a decisão é sua.
+Agente automatizado de descoberta, análise, geração de documentos ATS e candidatura a vagas de emprego com notificações pelo Telegram, utilizando **Gemini 4 Neon (Medium)** via CLI `agy`.
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -12,129 +8,91 @@ melhores vagas para o Telegram com o currículo recomendado anexado.
 ## Como funciona
 
 ```
-┌────────────┐   ┌───────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-│  Scrapers  │ → │  Filtros  │ → │ DB (dedupe)│ → │  Análise │ → │ Telegram │
-│ 5 portais  │   │ regra/idade│  │  SQLite   │   │   IA     │   │ + PDF    │
-└────────────┘   └───────────┘   └──────────┘   └──────────┘   └──────────┘
+┌────────────┐   ┌───────────┐   ┌──────────┐   ┌────────────┐   ┌────────────┐   ┌──────────┐
+│  Scrapers  │ → │  Filtros  │ → │ Análise  │ → │ Documentos │ → │ Candidatura│ → │ Telegram │
+│ 6 portais  │   │ + dedupe  │   │ IA (Neon)│   │ ATS (PDF)  │   │ (API/Web)  │   │ + PDFs   │
+└────────────┘   └───────────┘   └──────────┘   └────────────┘   └────────────┘   └──────────┘
 ```
 
-1. **Coleta** — 5 scrapers rodam em sequência:
-   - **Programathor** — listagem rica (HTML)
-   - **GeekHunter** — listagem + página de detalhe pública
-   - **LinkedIn** — requer sessão salva (ver [Login](#login-sessões))
-   - **QueroVagas Tech** — API JSON pública
-   - **Nerdin** — listagem HTML
-2. **Filtros** — idade da vaga, palavras-chave bloqueadas, empresas bloqueadas,
-   níveis (estágio/trainee), dedupe por id + hash de título/empresa.
-3. **Persistência** — SQLite (`data/jobs.db`) com histórico e status:
-   `new → analyzed → notified | skipped_low_match | analysis_failed`.
-4. **Análise IA** — a vaga é comparada com seus currículos (PDFs em `resumes/`),
-   retornando: match 0–100, skills casadas, gaps, razões e qual currículo usar.
-5. **Notificação** — mensagem formatada + PDF do currículo recomendado no Telegram.
+1. **Coleta (6 portais)** — Programathor, GeekHunter, LinkedIn, QueroVagas Tech, DevAgas e Nerdin.
+2. **Filtros e deduplicação** — Idade máxima da vaga, palavras-chave/empresas bloqueadas, níveis bloqueados e dedupe por ID + SHA-1 (`título|empresa`).
+3. **Análise inteligente com IA (`gemini-4-neon-medium`, effort `medium`)** — Avalia compatibilidade técnica, experiência real, senioridade, stack obrigatória/desejável, requisitos eliminatórios, idioma (`pt`/`en`), modalidade/localização e salário. Vagas incompatíveis ou com blockers eliminatórios são marcadas como `rejected` sem gerar documentos.
+4. **Geração de documentos personalizados (ATS)** — Seleciona o currículo-base em `resumes/`, gera `resume.md` e `resume.pdf` no idioma da vaga (coluna única, sem tabelas/colunas/ícones, validado via `pypdf` e checagem de veracidade de datas/fatos) e gera `cover_letter.md` / `cover_letter.pdf` **somente** quando a plataforma solicita carta de apresentação.
+5. **Automação de candidaturas extensível (`bot/appliers/`)** — Prioriza APIs oficiais (Greenhouse Job Board API, Lever Postings API) e automação Playwright para formulários web (Ashby, LinkedIn Easy Apply, Gupy, Programathor, GeekHunter, Nerdin, formulários genéricos). Exige confirmação explícita da plataforma antes de marcar como `applied`.
+6. **Segurança e intervenção humana** — CAPTCHA, MFA/login, declarações legais/sensíveis, perguntas não verificadas ou pedidos de carta de recomendação de terceiros **nunca** são contornados ou inventados; a vaga vai para `pending_human_action` com notificação no Telegram e link direto + PDFs prontos.
+7. **Controle e persistência (`data/jobs.db`)** — Ciclo de vida completo (`discovered → analyzed → rejected | preparing_documents → documents_ready → applying → applied | pending_human_action | application_failed | expired`), idempotência contra candidaturas duplicadas, retentativas controladas, recuperação pós-crash e trava de concorrência (`flock`).
+8. **Modo Dry-Run (`APPLICATION_DRY_RUN=true`)** — Executa descoberta, análise, geração/validação dos PDFs e preenchimento do formulário **sem clicar em enviar**.
 
 ## Estrutura
 
 ```
 bot/
-├── main.py            # orquestração: coleta → filtra → analisa → notifica
-├── config.py          # logging + helpers de env
-├── generate_profile.py# gera perfil consolidado a partir dos currículos
-├── login.py           # login interativo (Playwright) para sessões
-├── profile.py         # ResumeLibrary (le PDFs, extrai texto)
-├── scrapers/
-│   ├── base.py        # JobSource (classe abstrata)
-│   ├── browser.py     # helpers Playwright (goto, UA, sleep)
-│   ├── programathor.py
-│   ├── geekhunter.py
-│   ├── linkedin.py
-│   ├── querovagas.py
-│   └── nerdin.py
-├── gemini/            # análise IA (via CLI agy, sem API key)
-│   ├── analysis.py    # JobAnalyzer + chamada subprocess agy
-│   └── prompts.py     # prompts de análise
-├── filters/filters.py # content_hash, is_too_old, passes_pre_filters
-├── database/db.py     # SQLite (jobs, dedupe, análise, status)
+├── main.py                  # orquestração com lock, recuperação pós-crash e limites
+├── config.py                # Settings tipadas, logs estruturados JSON, redação de segredos, run_lock
+├── profile.py               # ResumeLibrary (normalização pypdf) + CandidateProfile
+├── generate_profile.py      # gera state/profile.md + state/profile.json
+├── login.py                 # login interativo (Playwright) com permissões 0600
+├── scrapers/                # 6 scrapers preservados (Programathor, GeekHunter, LinkedIn, QueroVagas, DevAgas, Nerdin)
+├── filters/filters.py       # content_hash, is_too_old, passes_pre_filters, detect_language
+├── gemini/
+│   ├── client.py            # cliente unificado CLI agy (Gemini 4 Neon, Medium, retries)
+│   ├── prompts.py           # prompts de análise, currículo ATS, carta e Q&A verificado
+│   └── analysis.py          # JobAnalyzer + should_apply
+├── documents/
+│   ├── storage.py           # data/applications/{job_id}/ (resume.*, cover_letter.*, metadata.json)
+│   ├── pdf_renderer.py      # ReportLab coluna única ATS + validador pypdf
+│   ├── resume_generator.py  # TailoredResumeGenerator + checagem de veracidade
+│   └── cover_letter.py      # CoverLetterGenerator sob demanda
+├── appliers/
+│   ├── base.py              # contratos + detectores de CAPTCHA, MFA, legal, confirmação
+│   ├── detector.py          # detecção de plataforma e resolução da URL de candidatura
+│   ├── form_filler.py       # VerifiedFactAnswerer + PlaywrightFormFiller
+│   ├── greenhouse.py        # Greenhouse Job Board API + Playwright
+│   ├── lever.py             # Lever Postings API + Playwright
+│   ├── ashby.py / gupy.py / linkedin.py / portals.py / generic.py
+│   └── registry.py          # ApplierRegistry extensível
+├── database/db.py           # SQLite (jobs, applications, application_events) + migração automática
 └── telegram/
-    ├── client.py      # Bot API client (urllib puro, multipart p/ PDF)
-    └── format.py      # formatação da mensagem HTML
+    ├── client.py            # envio de mensagens e múltiplos PDFs (urllib puro)
+    └── format.py            # notificações de candidatura, intervenção humana, dry-run e alertas
+tests/                       # suíte pytest (unitários + integração ponta a ponta)
 ```
 
-## Portais
-
-| Portal | Tipo | Requer login |
-|---|---|---|
-| Programathor | HTML | sim (opcional) |
-| GeekHunter | HTML | não |
-| LinkedIn | HTML | sim (obrigatório) |
-| QueroVagas | API JSON | não |
-| Nerdin | HTML | não |
-
-## Instalação
+## Início rápido
 
 ```bash
-git clone https://github.com/raulhenrique-x3/bot-job.git
-cd bot-job
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/playwright install chromium
-cp .env.example .env   # preencher TELEGRAM_*
+cp .env.example .env         # configurar TELEGRAM_* e revisar APPLICATION_DRY_RUN=true
 ```
 
-IA: usa o binário `agy` (`~/.local/bin/agy`). Sem API key no código.
-Modelo configurável via `AGY_MODEL`.
-
-## Login (sessões)
+Coloque seus currículos originais em `resumes/` (não versionado) e gere o perfil consolidado:
 
 ```bash
-.venv/bin/python -m bot.login linkedin      # salva state/auth_linkedin.json
-.venv/bin/python -m bot.login programathor  # salva state/auth.json
+.venv/bin/python -m bot.generate_profile   # cria state/profile.md e state/profile.json
 ```
 
-Sessions expiram; re-loge quando aparecer "session lost" no log.
-
-## Perfil consolidado (uma vez)
+Salve sessões autenticadas quando necessário:
 
 ```bash
-.venv/bin/python -m bot.generate_profile   # lê resumes/*.pdf → state/profile.md
+.venv/bin/python -m bot.login linkedin
+.venv/bin/python -m bot.login programathor
 ```
 
-Revisar `state/profile.md` (a IA gera; revise por inventário).
-
-## Execução
+Execute um ciclo (em `APPLICATION_DRY_RUN=true` por padrão para validação segura):
 
 ```bash
-.venv/bin/python -m bot.main   # um ciclo: coleta → filtra → analisa → notifica
+.venv/bin/python -m bot.main
 ```
 
-Agendamento via systemd timer (ver `deploy/`) ou cron:
-
-```
-*/30 * * * * cd ~/projetos/bot-job && .venv/bin/python -m bot.main >> logs/cron.log 2>&1
-```
-
-## Docker
+Para rodar os testes:
 
 ```bash
-docker compose up -d
+.venv/bin/pytest -v
 ```
 
-O container roda como scheduler: executa um ciclo e dorme
-`SCRAPE_INTERVAL_MINUTES` minutos.
-
-Veja `docs/` para detalhes de arquitetura e configuração.
-
-## Currículos
-
-Coloque seus PDFs em `resumes/` (não versionado). O nome do arquivo (sem
-extensão) vira a `resume_key` que a IA escolhe. Ex: `resumes/fullstack.pdf`.
-Bot espera ter um ou mais currículos e escolhe o melhor fit por vaga.
-
-## Detalhes técnicos
-
-- Max 8 análises por ciclo; excedente fica `new` para o ciclo seguinte.
-- 1 chamada `agy` por vaga nova (~22k tokens in, JSON schema estrito).
-- Chromium headless sob demanda; sem processo residente.
-- Dedupe por `id` do portal + hash de `título|empresa` (SHA-1).
+Consulte [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/CONFIGURATION.md](docs/CONFIGURATION.md) e [docs/INSTALL.md](docs/INSTALL.md) para detalhes completos.
 
 ## License
 

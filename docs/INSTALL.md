@@ -3,10 +3,10 @@
 ## Requisitos
 
 - Python 3.12+
-- Chromium (via Playwright) para scraping
-- binário `agy` para análise IA (opcional: sem ele, jobs ficam `new`)
+- Chromium via Playwright (scraping e preenchimento de formulários sem API)
+- CLI `agy` disponível no `PATH` (configurada por padrão para `gemini-4-neon-medium`, effort `medium`)
 
-## 1. Clonar e preparar ambiente
+## 1. Preparar ambiente
 
 ```bash
 git clone https://github.com/raulhenrique-x3/bot-job.git
@@ -22,88 +22,67 @@ python3.12 -m venv .venv
 cp .env.example .env
 ```
 
-Campos obrigatórios para notificação:
+Preencha `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`.
+Por segurança, `APPLICATION_DRY_RUN=true` vem habilitado no `.env.example` para que você valide análises, currículos ATS gerados e preenchimentos antes de ativar envios reais (`APPLICATION_DRY_RUN=false`).
 
-```
-TELEGRAM_BOT_TOKEN=...   # @BotFather
-TELEGRAM_CHAT_ID=...     # seu chat ou canal
-```
+## 3. Currículos originais e perfil consolidado
 
-Veja [CONFIGURATION.md](CONFIGURATION.md) para a lista completa de variáveis.
-
-## 3. Sessões (LinkedIn, Programathor)
-
-```bash
-.venv/bin/python -m bot.login linkedin
-.venv/bin/python -m bot.login programathor
-```
-
-Abre navegador real; faça login e dê ENTER no terminal. Sessions salvam em
-`state/auth_*.json` (não versionado). Re-login quando expirar.
-
-## 4. Currículos
-
-Coloque os PDFs em `resumes/`:
+Coloque seus currículos em PDF na pasta `resumes/` (não versionada). Ex.:
 
 ```
 resumes/
-├── fullstack.pdf
-└── frontend.pdf
+├── curriculo_raul_fullstack.pdf
+├── curriculo_raul_front_end.pdf
+├── curriculo_raul_ai_ml.pdf
+├── resume_raul_fullstack.pdf
+├── resume_raul_front_end.pdf
+└── resume_raul_ai_ml.pdf
 ```
 
-O `resume_key` = nome do arquivo sem extensão. A IA escolhe o melhor fit por
-vaga e o bot envia o PDF junto.
-
-Um run sem currículo não quebra: análise e notificação ficam desativadas.
-
-## 5. Perfis consolidado (opcional)
+Gere o perfil consolidado (`state/profile.md` e `state/profile.json`):
 
 ```bash
 .venv/bin/python -m bot.generate_profile
 ```
 
-Gera `state/profile.md` (revise o conteúdo).
+Revise `state/profile.json` e `state/profile.md`. Você pode preencher manualmente em `state/profile.json` campos opcionais como `work_authorization`, `salary_expectation` e `availability` para aumentar o índice de respostas verificadas em formulários.
 
-## 6. Rodar
+## 4. Sessões autenticadas (opcional por portal)
 
-### Manual / cron
+```bash
+.venv/bin/python -m bot.login linkedin
+.venv/bin/python -m bot.login programathor
+.venv/bin/python -m bot.login geekhunter
+.venv/bin/python -m bot.login gupy
+```
+
+As sessões são salvas em `state/auth_*.json` com permissão restrita `0600` (e ignoradas pelo `.gitignore`).
+
+## 5. Executar
+
+### Ciclo manual (recomendado primeiro em `APPLICATION_DRY_RUN=true`)
 
 ```bash
 .venv/bin/python -m bot.main
 ```
 
-Cron (a cada 30 min):
-
-```
-*/30 * * * * cd ~/projetos/bot-job && .venv/bin/python -m bot.main >> logs/cron.log 2>&1
-```
-
-### systemd timer
+### Testes automatizados
 
 ```bash
-sudo cp deploy/jobbot.service /etc/systemd/system/jobbot@.service
-sudo cp deploy/jobbot.timer    /etc/systemd/system/jobbot.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now jobbot.timer@seuusuario.timer
+.venv/bin/pip install pytest
+.venv/bin/pytest -v
 ```
 
-### Docker
+### Cron / Systemd / Docker
 
 ```bash
+# Docker (roda em loop a cada SCRAPE_INTERVAL_MINUTES)
 docker compose up -d
+docker compose logs -f
 ```
-
-O container faz scraping, análise e dorme `SCRAPE_INTERVAL_MINUTES` entre
-ciclos. Volumes montam `data/`, `state/`, `resumes/`.
-
-## Logs
-
-- stdout/stderr: formato `%(asctime)s %(levelname)s %(name)s: %(message)s`
-- Systemd: `journalctl -u jobbot@seuusuario -f`
-- Docker: `docker compose logs -f`
 
 ## Segurança
 
-- `.env` contém token do Telegram → **nunca** versionar.
-- `state/auth_*.json` contém cookies de sessão → **nunca** versionar.
-- `data/jobs.db` e `resumes/` ficam fora do git.
+- `.env`, `state/`, `data/` e `resumes/` estão no `.gitignore` e nunca devem ser versionados.
+- Logs estruturados mascaram automaticamente tokens do Telegram, headers `Bearer` e credenciais inline.
+- O bot nunca tenta contornar CAPTCHA, MFA ou proteções anti-bot; nesses casos gera `pending_human_action` e notifica no Telegram.

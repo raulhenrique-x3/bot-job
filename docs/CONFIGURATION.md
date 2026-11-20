@@ -1,91 +1,90 @@
 # Configuração (.env)
 
-Todas as variáveis são opcionais exceto as de Telegram. Copie `.env.example`.
-
-## Telegram
-
-| Var | Default | Descrição |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | — | token do @BotFather |
-| `TELEGRAM_CHAT_ID` | — | chat/canal destino |
-
-Sem elas, o bot roda mas notifica não envia (log warning).
+Copie `.env.example` para `.env` e ajuste os parâmetros desejados.
 
 ## IA (`agy` CLI)
 
-| Var | Default | Descrição |
+| Variável | Default | Descrição |
 |---|---|---|
-| `AGY_MODEL` | — | override do modelo; usa default do binário |
+| `AGY_MODEL` | `gemini-4-neon-medium` | Modelo de IA (Gemini 4 Neon) |
+| `AGY_REASONING_EFFORT` | `medium` | Nível de raciocínio (`low\|medium\|high\|xhigh\|max`) |
+| `AGY_TIMEOUT_SECONDS` | `300` | Timeout por chamada `agy` |
+| `AGY_MAX_RETRIES` | `2` | Retentativas em falhas transitórias da CLI `agy` |
 
-A IA roda via binário `agy` no PATH. Se não existir, o bot segue sem análise
-(jobs ficam `new` para próxima execução).
+## Telegram
 
-## Ciclo / Limites
-
-| Var | Default | Descrição |
+| Variável | Default | Descrição |
 |---|---|---|
-| `SCRAPE_INTERVAL_MINUTES` | `30` | intervalo entre ciclos (Docker loop / timer) |
-| `JOB_MAX_AGE_DAYS` | `14` | descarta vaga mais velha que isso |
-| `JOB_MATCH_THRESHOLD` | `75` | match % mínimo para notificar |
-| `MAX_PAGES_PER_PORTAL` | `2` | paginação por portal/termo |
+| `TELEGRAM_BOT_TOKEN` | — | Token do `@BotFather` |
+| `TELEGRAM_CHAT_ID` | — | Chat/canal de destino |
 
-## Scrapers (on/off switch)
+## Descoberta e Compatibilidade
 
-| Var | Default | Descrição |
+| Variável | Default | Descrição |
 |---|---|---|
-| `PROGRAMATHOR_ENABLED` | `true` | liga/desliga portal |
-| `GEEKHUNTER_ENABLED` | `true` | liga/desliga portal |
-| `LINKEDIN_ENABLED` | `true` | liga/desliga portal |
-| `QUEROVAGAS_ENABLED` | `true` | liga/desliga portal |
-| `NERDIN_ENABLED` | `true` | liga/desliga portal |
-| `QUEROVAGAS_WORK_MODE` | `Remote` | filtro de modalidade |
-| `LINKEDIN_KEYWORDS` | `desenvolvedor` | termo único (uso interno) |
-| `LINKEDIN_SEARCH_TERMS` | `desenvolvedor` | termos por vírgula: `python node react` |
+| `SCRAPE_INTERVAL_MINUTES` | `30` | Intervalo entre ciclos (Docker / scheduler) |
+| `JOB_MAX_AGE_DAYS` | `14` | Descarta vagas mais antigas que N dias |
+| `JOB_MATCH_THRESHOLD` | `75` | Compatibilidade mínima (0–100) para avançar |
+| `MAX_ANALYSES_PER_RUN` | `8` | Limite de análises de IA por ciclo |
+| `DEFAULT_LANGUAGE` | `pt` | Idioma padrão quando detecção automática for inconclusiva |
+| `MAX_PAGES_PER_PORTAL` | `2` | Páginas coletadas por portal/termo |
 
-## Pré-filtros
+## Automação de Candidaturas
 
-| Var | Default | Descrição |
+| Variável | Default | Descrição |
 |---|---|---|
-| `BLOCKED_TITLE_KEYWORDS` | — | substring no título → skip (ex: `sap, mainframe`) |
-| `BLOCKED_COMPANIES` | — | substring na empresa → skip |
+| `AUTO_APPLY_ENABLED` | `true` | `true`: pipeline completo de candidatura; `false`: modo apenas recomendação |
+| `APPLICATION_DRY_RUN` | `true` | Modo simulação: analisa, gera PDFs e preenche formulário **sem enviar** |
+| `MAX_APPLICATIONS_PER_RUN` | `5` | Máximo de candidaturas processadas por ciclo |
+| `MAX_APPLICATIONS_PER_DAY` | `20` | Teto diário de candidaturas reais enviadas |
+| `APPLICATION_INTERVAL_SECONDS` | `30` | Intervalo em segundos entre candidaturas |
+| `APPLICATION_MAX_RETRIES` | `3` | Máximo de retentativas para falhas temporárias |
+| `APPLICATION_RETRY_BACKOFF_MINUTES` | `30` | Base do backoff exponencial entre retentativas |
+| `APPLICATION_TIMEOUT_SECONDS` | `60` | Timeout por interação/envio na plataforma |
 
-Filtros fixos no código: estágio, estagiário, intern, trainee.
+## Diretórios e Logs
 
-## Referência rápida (.env.example)
+| Variável | Default | Descrição |
+|---|---|---|
+| `RESUMES_DIR` | `resumes` | Pasta com currículos originais (PDF) |
+| `APPLICATIONS_DIR` | `data/applications` | Diretório dos documentos gerados por vaga |
+| `DATABASE_PATH` | `data/jobs.db` | Caminho do banco SQLite |
+| `PROFILE_JSON_PATH` | `state/profile.json` | Perfil estruturado verificado |
+| `PROFILE_MD_PATH` | `state/profile.md` | Perfil consolidado em Markdown |
+| `LOCK_FILE` | `state/jobbot.lock` | Lock exclusivo de concorrência |
+| `LOG_LEVEL` | `INFO` | Nível de log (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_FORMAT` | `json` | Formato de log (`json` estruturado ou `text`) |
 
-```ini
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-AGY_MODEL=
-SCRAPE_INTERVAL_MINUTES=30
-JOB_MAX_AGE_DAYS=14
-JOB_MATCH_THRESHOLD=75
-MAX_PAGES_PER_PORTAL=2
-LINKEDIN_ENABLED=true
-PROGRAMATHOR_ENABLED=true
-GEEKHUNTER_ENABLED=true
-QUEROVAGAS_ENABLED=true
-QUEROVAGAS_WORK_MODE=Remote
-NERDIN_ENABLED=true
-LINKEDIN_SEARCH_TERMS=desenvolvedor python node
-BLOCKED_TITLE_KEYWORDS=
-BLOCKED_COMPANIES=
-```
+## Scrapers e Pré-filtros
 
-## Jobs DB
+| Variável | Default | Descrição |
+|---|---|---|
+| `PROGRAMATHOR_ENABLED` | `true` | Habilita scraper Programathor |
+| `GEEKHUNTER_ENABLED` | `true` | Habilita scraper GeekHunter |
+| `LINKEDIN_ENABLED` | `true` | Habilita scraper LinkedIn |
+| `QUEROVAGAS_ENABLED` | `true` | Habilita scraper QueroVagas |
+| `DEVAGAS_ENABLED` | `true` | Habilita scraper DevAgas |
+| `NERDIN_ENABLED` | `true` | Habilita scraper Nerdin |
+| `QUEROVAGAS_WORK_MODE` | `Remote` | Filtro de modalidade QueroVagas |
+| `LINKEDIN_SEARCH_TERMS` | `desenvolvedor` | Termos separados por vírgula |
+| `BLOCKED_TITLE_KEYWORDS` | — | Substrings no título para ignorar |
+| `BLOCKED_COMPANIES` | — | Empresas para ignorar |
 
-Local: `data/jobs.db` (SQLite).
-
-Colunas relevantes: `status`, `match_score`, `recommendation`,
-`resume_key`, `notified_at`, `first_seen_at` / `last_seen_at`.
-
-Consultas úteis:
+## Consultas úteis no SQLite
 
 ```sql
--- estatísticas por status
+-- Resumo de vagas por status
 SELECT status, COUNT(*) FROM jobs GROUP BY status;
 
--- melhores vagas não notificadas
-SELECT title, company, match_score
-FROM jobs WHERE status='analyzed' ORDER BY match_score DESC LIMIT 20;
+-- Candidaturas enviadas e pendentes de ação humana
+SELECT job_id, company, title, platform, status, match_score, confirmation_id, applied_at
+FROM applications
+ORDER BY updated_at DESC
+LIMIT 20;
+
+-- Trilha de auditoria de uma vaga específica
+SELECT created_at, status, detail
+FROM application_events
+WHERE job_id = 'gh:123'
+ORDER BY id ASC;
 ```
