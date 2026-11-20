@@ -6,6 +6,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable
+from urllib.parse import urlparse
 
 from bot.profile import CandidateProfile
 
@@ -18,7 +19,7 @@ _CAPTCHA_PATTERNS = (
 )
 
 _MFA_AUTH_PATTERNS = (
-    re.compile(r"/authwall|/checkpoint|/login|/signin|/sign_in|/sso|two-factor|2fa|mfa", re.IGNORECASE),
+    re.compile(r"/authwall|/checkpoint|/login|/signin|/sign_in|/sso|/(?:two-factor|2fa|mfa)(?:/|$)", re.IGNORECASE),
     re.compile(r"código de verificação|verification code|autenticação em dois fatores|faça login para se candidatar|sign in to apply|log in to apply", re.IGNORECASE),
 )
 
@@ -236,7 +237,8 @@ def is_privacy_terms_checkbox(label: str) -> bool:
 
 
 def detect_mfa_or_auth_wall(url: str, text: str = "") -> str | None:
-    if _MFA_AUTH_PATTERNS[0].search(url or ""):
+    path = urlparse(url or "").path or ""
+    if _MFA_AUTH_PATTERNS[0].search(path):
         return f"Autenticação/login ou MFA obrigatório detectado ({url})."
     sample = (text or "")[:4000]
     m = _MFA_AUTH_PATTERNS[1].search(sample)

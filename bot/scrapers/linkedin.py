@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from urllib.parse import quote_plus
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
@@ -10,6 +11,53 @@ from bot.scrapers.base import JobSource
 logger = logging.getLogger("jobbot.scrapers.linkedin")
 
 BASE = "https://www.linkedin.com"
+_CLOSED_JOB_RE = re.compile(
+    r"n[ãa]o aceita mais candidaturas|no longer accepting applications",
+    re.IGNORECASE,
+)
+
+
+def build_profile_search_terms(profile, max_terms: int = 4) -> list[str]:
+    """Derive focused LinkedIn search queries from the candidate's verified profile."""
+    if profile is None:
+        return ["desenvolvedor"]
+
+    headline = (getattr(profile, "headline", "") or "").lower()
+    skills_list = [str(s).lower() for s in (getattr(profile, "skills", None) or [])]
+    blob = f"{headline} {' '.join(skills_list)}"
+
+    has = lambda *kws: any(k in blob for k in kws)
+    terms: list[str] = []
+
+    if has("fullstack", "full stack", "full-stack") and has("react", "next.js") and has("node", "typescript"):
+        terms.append("Fullstack React Node")
+    elif has("fullstack", "full stack", "full-stack") and has("python"):
+        terms.append("Fullstack Python")
+
+    if has("python") and has("fastapi", "flask", "django", "backend", "back-end", "fullstack", "full stack"):
+        terms.append("Desenvolvedor Python")
+
+    if has("react", "next.js") and has("typescript", "front-end", "frontend"):
+        terms.append("Frontend React TypeScript")
+
+    if has("llm", "genai", "ia", "ai ", "inteligência artificial", "machine learning", "langchain", "rag"):
+        terms.append("AI Engineer Python")
+
+    if len(terms) < max_terms and has("node.js", "nestjs", "express"):
+        terms.append("Desenvolvedor Node TypeScript")
+
+    if len(terms) < max_terms and has(".net", "c#"):
+        terms.append("Desenvolvedor .NET")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in terms:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return unique[:max_terms] or ["desenvolvedor"]
 
 
 def parse_title_from_text(li) -> str:
@@ -21,11 +69,21 @@ def parse_title_from_text(li) -> str:
 class LinkedInScraper(JobSource):
     name = "linkedin"
 
-    def __init__(self, browser, search_terms: list[str], max_days: int = 10, remote_only: bool = False):
+    def __init__(
+        self,
+        browser,
+        search_terms: list[str],
+        max_days: int = 10,
+        remote_only: bool = True,
+        easy_apply_only: bool = True,
+        location: str = "Brasil",
+    ):
         self._browser = browser
         self._terms = [t.strip() for t in search_terms if t.strip()] or ["desenvolvedor"]
         self._max_days = max_days
         self._remote_only = remote_only
+        self._easy_apply_only = easy_apply_only
+        self._location = (location or "Brasil").strip()
         self.session_lost = False
 
     def scrape(self) -> list[dict]:
@@ -50,12 +108,18 @@ class LinkedInScraper(JobSource):
     def _search_url(self, term: str, page_n: int = 1) -> str:
         days = min(self._max_days, 14)
         start = (page_n - 1) * 25
-        f_tpr = f"f_TPR=r{days * 86400}"
-        remote = "f_WT=2&" if self._remote_only else ""
-        return (
-            f"{BASE}/jobs/search/?keywords={term.replace(' ', '%20')}"
-            f"&location=Brasil&{remote}{f_tpr}&start={start}&origin=JOB_SEARCH_PAGE_QUERY"
-        )
+        params = [
+            f"keywords={quote_plus(term)}",
+            f"location={quote_plus(self._location)}",
+            f"f_TPR=r{days * 86400}",
+        ]
+        if self._remote_only:
+            params.append("f_WT=2")
+        if self._easy_apply_only:
+            params.append("f_AL=true")
+        params.append(f"start={start}")
+        params.append("origin=JOB_SEARCH_PAGE_QUERY")
+        return f"{BASE}/jobs/search/?{'&'.join(params)}"
 
     def _page_html(self, url: str) -> str | None:
         from bot.scrapers.browser import goto
@@ -94,21 +158,31 @@ class LinkedInScraper(JobSource):
             if job_id in out:
                 continue
             lines = [ln.strip() for ln in card.get_text("\n", strip=True).split("\n") if ln.strip()]
-            # Filter accessibility prefixes like "Selecionada, ..." or "(vaga verificada)"
+            # Filter accessibility prefixes like "Selecionada, ..." or "(vaga verificada)" / "(Verified job)"
             clean_lines = [
                 ln for ln in lines
-                if not re.match(r"^(selecionada,|vaga verificada|\(vaga verificada\))$", ln, re.I)
+                if not re.match(
+                    r"^(selecionada,|selected,|vaga verificada|\(vaga verificada\)|verified job|\(verified job\))$",
+                    ln,
+                    re.I,
+                )
             ]
             title = clean_lines[0] if clean_lines else ""
-            title = re.sub(r"^selecionada,\s*", "", title, flags=re.I)
-            title = re.sub(r"\s*\(vaga verificada\)\s*$", "", title, flags=re.I).strip()
-            company = clean_lines[1] if len(clean_lines) > 1 else ""
-            if company.lower() == title.lower() and len(clean_lines) > 2:
-                company = clean_lines[2]
+            title = re.sub(r"^(?:selecionada|selected),\s*", "", title, flags=re.I)
+            title = re.sub(r"\s*\((?:vaga verificada|verified job)\)\s*$", "", title, flags=re.I).strip()
+            company = ""
+            for ln in clean_lines[1:]:
+                cand = re.sub(r"\s*\((?:vaga verificada|verified job)\)\s*$", "", ln, flags=re.I).strip()
+                if cand.lower() == title.lower():
+                    continue
+                company = cand
+                break
             location = ""
             remote = False
             for ln in clean_lines[1:]:
-                if any(k in ln for k in ("Remoto", "Remote", "Híbrido", "Hybrid", "Presencial", "Brasil", "Brazil")) and len(ln) < 90:
+                if ln.lower() == title.lower() or ln.lower() == company.lower():
+                    continue
+                if any(k in ln for k in ("Remoto", "Remote", "Híbrido", "Hybrid", "Presencial", "On-site", "Brasil", "Brazil")) and len(ln) < 90:
                     location = ln
                     remote = bool(re.search(r"remot", ln, re.I))
                     break
@@ -206,7 +280,9 @@ class LinkedInScraper(JobSource):
                     page.wait_for_selector(".show-more-less-html, .jobs-description", timeout=8000)
                 except PWTimeout:
                     pass
-                detail["body"] = page.inner_text("body")[:8000]
+                body = page.inner_text("body")[:8000]
+                detail["expired"] = bool(_CLOSED_JOB_RE.search(body[:3000]))
+                detail["body"] = body
         except PWTimeout:
             pass
         return detail

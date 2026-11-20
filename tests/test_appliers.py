@@ -563,3 +563,44 @@ def test_portal_expired_detection_and_devagas_removed():
     names = [s.name for s in scrapers]
     assert "devagas" not in names
     assert set(names) == {"programathor", "geekhunter", "linkedin", "querovagas", "nerdin"}
+
+
+def test_linkedin_profile_queries_easy_apply_url_and_mfa_query_param_guard():
+    from bot.scrapers.linkedin import LinkedInScraper, build_profile_search_terms
+
+    # Base64 trackingId with %2FA must NOT trigger 2FA auth wall false positive
+    url_with_2fa_in_query = (
+        "https://www.linkedin.com/jobs/view/4484108587/"
+        "?companyName=Avenue+Code&trackingId=tzrGlvZwR9auG%2Fe3o%2FA0Ug%3D%3D"
+    )
+    assert detect_mfa_or_auth_wall(url_with_2fa_in_query, "Easy Apply") is None
+    assert detect_mfa_or_auth_wall("https://www.linkedin.com/checkpoint/challenge", "") is not None
+
+    profile = CandidateProfile(
+        headline="Engenheiro de Software | Fullstack & Front-end | React, Next.js, TypeScript, Node.js, Python, IA & LLMs",
+        skills=["Python", "TypeScript", "React", "Next.js", "Node.js", "FastAPI"],
+    )
+    terms = build_profile_search_terms(profile)
+    assert len(terms) >= 3
+    assert any("React" in t for t in terms)
+    assert any("Python" in t for t in terms)
+
+    scraper = LinkedInScraper(browser=None, search_terms=terms, max_days=7, remote_only=True, easy_apply_only=True)
+    search_url = scraper._search_url(terms[0], page_n=1)
+    assert "f_AL=true" in search_url
+    assert "f_WT=2" in search_url
+
+    # English SDUI card with "(Verified job)" duplicate title line must extract real company
+    en_html = """
+    <div componentkey="job-card-component-ref-4484108587" role="button">
+      <div>Full-stack Engineer (Verified job)</div>
+      <div>Full-stack Engineer</div>
+      <div>Avenue Code</div>
+      <div>Brazil (Remote)</div>
+    </div>
+    """
+    parsed = scraper._parse_listing(en_html)
+    assert len(parsed) == 1
+    assert parsed[0]["title"] == "Full-stack Engineer"
+    assert parsed[0]["company"] == "Avenue Code"
+    assert parsed[0]["remote"] is True

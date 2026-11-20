@@ -32,7 +32,7 @@ from bot.filters.filters import content_hash, is_too_old, passes_pre_filters
 from bot.gemini.analysis import JobAnalyzer, should_apply
 from bot.profile import CandidateProfile, ResumeLibrary
 from bot.scrapers.geekhunter import GeekHunterScraper
-from bot.scrapers.linkedin import LinkedInScraper
+from bot.scrapers.linkedin import LinkedInScraper, build_profile_search_terms
 from bot.scrapers.nerdin import NerdinScraper
 from bot.scrapers.programathor import ProgramathorScraper
 from bot.scrapers.querovagas import QueroVagasScraper
@@ -69,20 +69,25 @@ def _clear_alert(key: str) -> None:
         pass
 
 
-def build_scrapers(browser, max_age_days: int) -> list:
+def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | None = None) -> list:
     scrapers = []
     if env_bool("PROGRAMATHOR_ENABLED", True):
         scrapers.append(ProgramathorScraper(browser))
     if env_bool("GEEKHUNTER_ENABLED", True):
         scrapers.append(GeekHunterScraper(browser))
     if env_bool("LINKEDIN_ENABLED", True):
-        terms = env_list("LINKEDIN_SEARCH_TERMS", "desenvolvedor")
+        if env_bool("LINKEDIN_USE_PROFILE_QUERIES", True) and profile is not None:
+            terms = build_profile_search_terms(profile)
+        else:
+            terms = env_list("LINKEDIN_SEARCH_TERMS", "desenvolvedor")
         scrapers.append(
             LinkedInScraper(
                 browser,
                 search_terms=terms,
                 max_days=max_age_days,
-                remote_only=False,
+                remote_only=env_bool("LINKEDIN_REMOTE_ONLY", True),
+                easy_apply_only=env_bool("LINKEDIN_EASY_APPLY_ONLY", True),
+                location=env("LINKEDIN_LOCATION", "Brasil"),
             )
         )
     if env_bool("QUEROVAGAS_ENABLED", True):
@@ -448,7 +453,15 @@ def _run_cycle(
                 )
             )
 
-        # 2. Launch Playwright only if no browser context override was provided
+        # 2. Load resumes & verified candidate profile (used for profile-driven search + analysis + apply)
+        resume_library = ResumeLibrary(cfg.resumes_dir)
+        profile = CandidateProfile.load(
+            resume_library,
+            profile_json_path=cfg.profile_json_path,
+            profile_md_path=cfg.profile_md_path,
+        )
+
+        # 3. Launch Playwright only if no browser context override was provided
         if context is None and scrapers_override is None:
             from playwright.sync_api import sync_playwright
             from bot.scrapers.browser import launch_options, load_merged_storage_state
@@ -463,10 +476,14 @@ def _run_cycle(
                 ctx_opts["storage_state"] = storage_state
             context = browser.new_context(**ctx_opts)
 
-        scrapers = scrapers_override if scrapers_override is not None else build_scrapers(context, cfg.job_max_age_days)
+        scrapers = (
+            scrapers_override
+            if scrapers_override is not None
+            else build_scrapers(context, cfg.job_max_age_days, profile=profile)
+        )
         by_source = {s.name: s for s in scrapers}
 
-        # 3. Scrape, deduplicate, pre-filter, persist
+        # 4. Scrape, deduplicate, pre-filter, persist
         all_jobs = collect_jobs(scrapers)
         collected_by = Counter(job.get("source") for job in all_jobs)
         for scraper in scrapers:
@@ -487,13 +504,6 @@ def _run_cycle(
         if fresh:
             persist(fresh, db)
 
-        # 4. Load resumes & verified candidate profile
-        resume_library = ResumeLibrary(cfg.resumes_dir)
-        profile = CandidateProfile.load(
-            resume_library,
-            profile_json_path=cfg.profile_json_path,
-            profile_md_path=cfg.profile_md_path,
-        )
         analyzer = analyzer_override or JobAnalyzer(
             resume_library,
             candidate_profile=profile,

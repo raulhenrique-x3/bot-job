@@ -65,7 +65,11 @@ Copie `.env.example` para `.env` e ajuste os parâmetros desejados.
 | `QUEROVAGAS_ENABLED` | `true` | Habilita scraper QueroVagas |
 | `NERDIN_ENABLED` | `true` | Habilita scraper Nerdin |
 | `QUEROVAGAS_WORK_MODE` | `Remote` | Filtro de modalidade QueroVagas |
-| `LINKEDIN_SEARCH_TERMS` | `desenvolvedor` | Termos separados por vírgula |
+| `LINKEDIN_USE_PROFILE_QUERIES` | `true` | Gera termos de busca do LinkedIn automaticamente a partir do perfil (`state/profile.json`) |
+| `LINKEDIN_EASY_APPLY_ONLY` | `true` | Filtra buscas do LinkedIn apenas para vagas com Easy Apply (`f_AL=true`) |
+| `LINKEDIN_REMOTE_ONLY` | `true` | Filtra buscas do LinkedIn apenas para vagas remotas (`f_WT=2`) |
+| `LINKEDIN_LOCATION` | `Brasil` | Localização usada nas buscas do LinkedIn |
+| `LINKEDIN_SEARCH_TERMS` | `desenvolvedor` | Termos manuais separados por vírgula (usado quando `LINKEDIN_USE_PROFILE_QUERIES=false`) |
 | `BLOCKED_TITLE_KEYWORDS` | — | Substrings no título para ignorar |
 | `BLOCKED_COMPANIES` | — | Empresas para ignorar |
 

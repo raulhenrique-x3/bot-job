@@ -259,14 +259,29 @@ class Database:
         self.log_event(job_id, "notified", "")
 
     def jobs_pending_analysis(self, limit: int = 10) -> list[dict]:
-        """Jobs with bodies first (no detail fetch needed), then oldest."""
+        """Return newest pending jobs interleaved across sources so no portal (e.g. LinkedIn) is starved."""
         rows = self._conn.execute(
             """SELECT * FROM jobs WHERE status IN ('discovered', 'new')
-               ORDER BY (body IS NULL OR body = ''), first_seen_at
+               ORDER BY first_seen_at DESC
                LIMIT ?""",
-            (limit,),
+            (max(limit * 10, 80),),
         ).fetchall()
-        return [dict(r) for r in rows]
+        by_source: dict[str, list[dict]] = {}
+        for r in rows:
+            d = dict(r)
+            by_source.setdefault(d.get("source") or "", []).append(d)
+        sources = sorted(by_source.keys(), key=lambda s: (0 if s == "linkedin" else 1, s))
+        result: list[dict] = []
+        while len(result) < limit and sources:
+            next_sources = []
+            for src in sources:
+                bucket = by_source[src]
+                if bucket and len(result) < limit:
+                    result.append(bucket.pop(0))
+                if bucket:
+                    next_sources.append(src)
+            sources = next_sources
+        return result
 
     # ------------------------------------------------------------------
     # Applications lifecycle, idempotency, retries & recovery
