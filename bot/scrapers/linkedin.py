@@ -125,7 +125,7 @@ class LinkedInScraper(JobSource):
         from bot.scrapers.browser import goto
 
         try:
-            with goto(self._browser, url) as page:
+            with goto(self._browser, url, timeout_ms=30000, block_heavy_assets=True) as page:
                 if page is None:
                     return None
                 if "/authwall" in page.url or "/login" in page.url or "/checkpoint" in page.url:
@@ -270,7 +270,7 @@ class LinkedInScraper(JobSource):
 
         detail = {"body": "", "expired": False}
         try:
-            with goto(self._browser, url) as page:
+            with goto(self._browser, url, timeout_ms=30000, block_heavy_assets=True) as page:
                 if page is None:
                     return detail
                 if "/authwall" in page.url or "/login" in page.url:

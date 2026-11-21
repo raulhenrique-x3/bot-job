@@ -69,8 +69,30 @@ def load_merged_storage_state(state_dir: str = "state") -> dict | None:
     }
 
 
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+_BLOCKED_URL_FRAGMENTS = (
+    "px.ads.linkedin.com",
+    "doubleclick.net",
+    "googletagmanager.com",
+    "google-analytics.com",
+)
+
+
+def _abort_heavy_route(route) -> None:
+    try:
+        req = route.request
+        if req.resource_type in _BLOCKED_RESOURCE_TYPES or any(
+            frag in (req.url or "") for frag in _BLOCKED_URL_FRAGMENTS
+        ):
+            route.abort()
+            return
+        route.continue_()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @contextmanager
-def goto(browser, url: str, timeout_ms: int = 45000):
+def goto(browser, url: str, timeout_ms: int = 45000, *, block_heavy_assets: bool = False):
     """Open a page in a throwaway context, yield it, always close."""
     try:
         page = browser.new_page()
@@ -78,10 +100,15 @@ def goto(browser, url: str, timeout_ms: int = 45000):
         logger.warning("new_page failed for %s: %s", url, exc)
         yield None
         return
+    if block_heavy_assets:
+        try:
+            page.route("**/*", _abort_heavy_route)
+        except Exception:  # noqa: BLE001
+            pass
     ok = True
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(500 if block_heavy_assets else 1500)
     except Exception as exc:  # noqa: BLE001
         logger.warning("goto failed url=%s err=%s", url, exc)
         ok = False

@@ -24,6 +24,8 @@ PLATFORM_HOST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("programathor", ("programathor.com.br",)),
     ("geekhunter", ("geekhunter.com", "geekhunter.com.br")),
     ("nerdin", ("nerdin.com.br",)),
+    ("wellfound", ("wellfound.com", "angel.co")),
+    ("avanade", ("avanade.com",)),
 )
 
 _APPLY_LINK_TEXT = re.compile(
@@ -39,10 +41,13 @@ def detect_platform(url: str, source: str = "") -> str:
         return "email"
     parsed = urlparse(clean)
     host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").lower()
+    if (host == "myworkdayjobs.com" or host.endswith(".myworkdayjobs.com")) and "/avanadecareers" in path:
+        return "avanade"
     for platform, suffixes in PLATFORM_HOST_RULES:
         if any(host == s or host.endswith("." + s) for s in suffixes):
             return platform
-    if source in ("linkedin", "programathor", "geekhunter", "nerdin") and not host:
+    if source in ("linkedin", "programathor", "geekhunter", "nerdin", "wellfound", "avanade") and not host:
         return source
     return "generic"
 

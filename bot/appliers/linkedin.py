@@ -53,7 +53,12 @@ class LinkedInApplier(PlatformApplier):
 
         from bot.scrapers.browser import goto
 
-        with goto(browser_context, apply_url, timeout_ms=timeout_seconds * 1000) as page:
+        with goto(
+            browser_context,
+            apply_url,
+            timeout_ms=min(timeout_seconds * 1000, 35000),
+            block_heavy_assets=True,
+        ) as page:
             if page is None:
                 return ApplicationOutcome(
                     status="application_failed",
@@ -63,6 +68,21 @@ class LinkedInApplier(PlatformApplier):
                     retryable=True,
                     dry_run=dry_run,
                 )
+
+            # Wait briefly for LinkedIn SDUI job header/CTA or closed banner to finish rendering
+            try:
+                page.wait_for_selector(
+                    "button[aria-label*='candidatura simplificada' i], "
+                    "button[aria-label*='easy apply' i], "
+                    "button.jobs-apply-button, "
+                    "button[aria-label*='candidatar-se' i], "
+                    "a[aria-label*='candidatar-se' i], "
+                    "a[aria-label*='apply' i], "
+                    "a[href*='/safety/go/']",
+                    timeout=8000,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             current_url = page.url or apply_url
             body_text = page.inner_text("body") if page.locator("body").count() else ""
@@ -92,19 +112,9 @@ class LinkedInApplier(PlatformApplier):
                         dry_run=dry_run,
                     )
 
-            # Find Apply / Easy Apply button (SDUI uses <a> for external apply and <button> for Easy Apply)
-            apply_btn = page.locator(
-                "button.jobs-apply-button, "
-                "button:has-text('Candidatura simplificada'), "
-                "button:has-text('Easy Apply'), "
-                "a[href*='/safety/go/']:has-text('Candidatar-se'), "
-                "a[href*='/safety/go/']:has-text('Apply'), "
-                "button:has-text('Candidatar-se'), "
-                "button:has-text('Apply'), "
-                "a:has-text('Candidatar-se'), "
-                "a:has-text('Apply')"
-            ).first
-            if apply_btn.count() == 0:
+            # Find Apply / Easy Apply CTA strictly in priority order (never matching job titles or description links)
+            apply_btn, is_easy = self._find_apply_button(page)
+            if apply_btn is None:
                 return ApplicationOutcome(
                     status="pending_human_action",
                     platform=self.platform_name,
@@ -112,9 +122,6 @@ class LinkedInApplier(PlatformApplier):
                     reason="Botão de candidatura não encontrado no LinkedIn (vaga pode já estar aplicada ou exigir login).",
                     dry_run=dry_run,
                 )
-
-            btn_text = (apply_btn.inner_text(timeout=1500) or "").lower()
-            is_easy = "simplificada" in btn_text or "easy apply" in btn_text
 
             if not is_easy:
                 # Follow external ATS redirect if possible and delegate to registry
@@ -141,20 +148,23 @@ class LinkedInApplier(PlatformApplier):
                 )
 
             modal_selector = (
-                "dialog[data-testid='dialog'], [data-testid='dialog-content'], "
-                ".jobs-easy-apply-modal, [role='dialog']"
+                "dialog[data-testid='dialog'], .jobs-easy-apply-modal, "
+                "[data-testid='dialog-content'], [role='dialog']"
             )
             try:
+                apply_btn.scroll_into_view_if_needed(timeout=3000)
                 apply_btn.click(timeout=5000)
-                page.wait_for_selector(modal_selector, timeout=8000)
-                # Wait for SDUI Easy Apply modal body (inputs/buttons) to finish hydrating
+                page.wait_for_selector(modal_selector, state="visible", timeout=10000)
+                # Wait for SDUI Easy Apply modal body (inputs or primary action button) to hydrate
                 try:
-                    page.locator(modal_selector).first.locator("input, select, textarea, button[type='submit']").first.wait_for(
-                        state="visible", timeout=6000
-                    )
+                    page.locator(modal_selector).first.locator(
+                        "input, select, textarea, "
+                        "button:has-text('Avançar'), button:has-text('Avaliar'), button:has-text('Enviar'), "
+                        "button:has-text('Next'), button:has-text('Review'), button:has-text('Submit')"
+                    ).first.wait_for(state="visible", timeout=6000)
                 except Exception:  # noqa: BLE001
                     pass
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(400)
             except Exception as exc:  # noqa: BLE001
                 return ApplicationOutcome(
                     status="application_failed",
@@ -199,6 +209,93 @@ class LinkedInApplier(PlatformApplier):
                 elif conf_id and not outcome.confirmation_id:
                     outcome.confirmation_id = conf_id
             return outcome
+
+    @staticmethod
+    def _find_apply_button(page) -> tuple[object | None, bool]:
+        """Locate the real LinkedIn Apply / Easy Apply CTA in strict priority order.
+
+        Avoids comma-joined `.first` selectors that can click job titles, cards, or
+        unrelated description links (e.g. 'Why Apply Through ...') appearing earlier in DOM.
+        """
+        js = r"""() => {
+            document.querySelectorAll('[data-jobbot-apply]').forEach(e => e.removeAttribute('data-jobbot-apply'));
+            const isVisible = (el) => {
+                if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+                const s = window.getComputedStyle(el);
+                if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity || '1') === 0) return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 10 && r.height > 10;
+            };
+            const isExcluded = (el) => {
+                if (el.closest('header, nav, footer, dialog, [role="dialog"]')) return true;
+                if (el.closest('[componentkey^="job-card"], li[data-occludable-job-id]')) return true;
+                const href = (el.getAttribute('href') || '').toLowerCase();
+                if (href.includes('/jobs/search') || href.includes('/jobs/view/')) return true;
+                return false;
+            };
+            const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+            const all = Array.from(document.querySelectorAll('button, a')).filter(el => isVisible(el) && !isExcluded(el));
+            const mark = (el, easy) => {
+                el.setAttribute('data-jobbot-apply', '1');
+                return { found: true, easy };
+            };
+
+            // Priority 1: explicit Easy Apply aria-label or legacy class
+            for (const el of all) {
+                if (el.tagName !== 'BUTTON') continue;
+                const aria = norm(el.getAttribute('aria-label'));
+                const cls = (el.className || '').toString();
+                if (aria.includes('candidatura simplificada') || aria.includes('easy apply') || cls.includes('jobs-apply-button')) {
+                    const txt = norm(el.innerText);
+                    const easy = aria.includes('simplificada') || aria.includes('easy apply') || txt.includes('simplificada') || txt.includes('easy apply');
+                    return mark(el, easy);
+                }
+            }
+
+            // Priority 2: exact visible Easy Apply button text
+            for (const el of all) {
+                if (el.tagName !== 'BUTTON') continue;
+                const txt = norm(el.innerText);
+                if (txt === 'candidatura simplificada' || txt === 'easy apply') {
+                    return mark(el, true);
+                }
+            }
+
+            // Priority 3: external Apply CTA (exact text or explicit apply aria-label, never description prose)
+            for (const el of all) {
+                const txt = norm(el.innerText);
+                const aria = norm(el.getAttribute('aria-label'));
+                if (txt.length > 40) continue;
+                const exactCta = (
+                    txt === 'candidatar-se' ||
+                    txt === 'apply' ||
+                    txt === 'apply now' ||
+                    txt === 'candidatar-se no site da empresa' ||
+                    txt === 'apply on company website'
+                );
+                const explicitAria = (
+                    aria.startsWith('candidatar-se') ||
+                    aria.startsWith('apply to ') ||
+                    aria.startsWith('apply on company')
+                );
+                if (exactCta || explicitAria) {
+                    const easy = txt.includes('simplificada') || txt.includes('easy apply');
+                    return mark(el, easy);
+                }
+            }
+
+            return { found: false, easy: false };
+        }"""
+        try:
+            res = page.evaluate(js) or {}
+            if res.get("found"):
+                loc = page.locator("[data-jobbot-apply='1']").first
+                if loc.count():
+                    return loc, bool(res.get("easy"))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("LinkedIn apply button discovery failed: %s", exc)
+        return None, False
 
     @staticmethod
     def _check_account_identity(page, modal_selector: str, profile: CandidateProfile) -> str | None:

@@ -32,6 +32,7 @@ from bot.documents import (
 from bot.filters.filters import content_hash, international_fit_score, is_too_old, passes_pre_filters
 from bot.gemini.analysis import JobAnalyzer, should_apply
 from bot.profile import CandidateProfile, ResumeLibrary
+from bot.scrapers.avanade import DEFAULT_AVANADE_URL, AvanadeScraper
 from bot.scrapers.geekhunter import GeekHunterScraper
 from bot.scrapers.international import (
     HimalayasScraper,
@@ -44,6 +45,7 @@ from bot.scrapers.linkedin import LinkedInScraper, build_profile_search_terms
 from bot.scrapers.nerdin import NerdinScraper
 from bot.scrapers.programathor import ProgramathorScraper
 from bot.scrapers.querovagas import QueroVagasScraper
+from bot.scrapers.wellfound import WellfoundScraper
 from bot.telegram.client import TelegramClient
 from bot.telegram.format import (
     format_application_notification,
@@ -112,6 +114,10 @@ def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | No
         scrapers.append(JobicyScraper(geos=env_list("JOBICY_GEOS", "latam,anywhere")))
     if env_bool("WORKINGNOMADS_ENABLED", True):
         scrapers.append(WorkingNomadsScraper())
+    if env_bool("WELLFOUND_ENABLED", True):
+        scrapers.append(WellfoundScraper(browser))
+    if env_bool("AVANADE_ENABLED", True):
+        scrapers.append(AvanadeScraper(search_url=env("AVANADE_SEARCH_URL", DEFAULT_AVANADE_URL)))
     return scrapers
 
 
@@ -122,7 +128,7 @@ def normalize(job: dict) -> dict:
     return data
 
 
-def collect_jobs(scrapers) -> list[dict]:
+def collect_jobs(scrapers, *, errors_out: dict[str, str] | None = None) -> list[dict]:
     all_jobs: list[dict] = []
     for scraper in scrapers:
         try:
@@ -131,6 +137,8 @@ def collect_jobs(scrapers) -> list[dict]:
             all_jobs.extend(jobs)
         except Exception as exc:  # noqa: BLE001
             logger.error("scraper failed", extra={"scraper": scraper.name, "error": str(exc)})
+            if errors_out is not None:
+                errors_out[scraper.name] = f"{type(exc).__name__}: {exc}"
     return all_jobs
 
 
@@ -505,10 +513,20 @@ def _run_cycle(
         by_source = {s.name: s for s in scrapers}
 
         # 4. Scrape, deduplicate, pre-filter, persist
-        all_jobs = collect_jobs(scrapers)
+        scraper_errors: dict[str, str] = {}
+        all_jobs = collect_jobs(scrapers, errors_out=scraper_errors)
         collected_by = Counter(job.get("source") for job in all_jobs)
         for scraper in scrapers:
             name = scraper.name
+            if name in scraper_errors:
+                _alert_once(
+                    telegram,
+                    f"scraper_error_{name}",
+                    f"Falha no scraper ({name})",
+                    f"Erro ao coletar vagas de {name}: {scraper_errors[name]}",
+                )
+            else:
+                _clear_alert(f"scraper_error_{name}")
             if getattr(scraper, "session_lost", False):
                 _alert_once(
                     telegram,

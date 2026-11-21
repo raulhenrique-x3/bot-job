@@ -225,6 +225,7 @@ class CandidateProfile:
     headline: str = ""
     languages: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    skill_experience_years: dict[str, str] = field(default_factory=dict)
     work_authorization: str = ""
     salary_expectation: str = ""
     salary_min: int = 0
@@ -258,6 +259,7 @@ class CandidateProfile:
             "headline": self.headline,
             "languages": self.languages,
             "skills": self.skills,
+            "skill_experience_years": self.skill_experience_years,
             "work_authorization": self.work_authorization,
             "salary_expectation": self.salary_expectation,
             "salary_min": self.salary_min,
@@ -299,6 +301,12 @@ class CandidateProfile:
             ("Anos de experiência", self.years_of_experience),
             ("Idiomas", ", ".join(self.languages) if self.languages else ""),
             ("Skills principais", ", ".join(self.skills) if self.skills else ""),
+            (
+                "Experiência específica por tecnologia",
+                ", ".join(f"{k}: {v} ano(s)" for k, v in self.skill_experience_years.items())
+                if self.skill_experience_years
+                else "",
+            ),
             ("Autorização de trabalho", self.work_authorization),
             ("Pretensão salarial (faixa)", sal_text),
             ("Possui CNPJ/Empresa aberta", cnpj_text),
@@ -370,6 +378,13 @@ class CandidateProfile:
             headline=str(merged.get("headline") or "").strip(),
             languages=[str(x).strip() for x in (merged.get("languages") or []) if str(x).strip()],
             skills=[str(x).strip() for x in (merged.get("skills") or []) if str(x).strip()],
+            skill_experience_years={
+                str(k).strip(): str(v).strip()
+                for k, v in (merged.get("skill_experience_years") or {}).items()
+                if str(k).strip() and str(v).strip()
+            }
+            if isinstance(merged.get("skill_experience_years"), dict)
+            else {},
             work_authorization=str(merged.get("work_authorization") or "").strip(),
             salary_expectation=str(merged.get("salary_expectation") or "").strip(),
             salary_min=int(merged.get("salary_min") or 0),

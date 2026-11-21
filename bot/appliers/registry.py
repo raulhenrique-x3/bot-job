@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from bot.appliers.ashby import AshbyApplier
+from bot.appliers.avanade import AvanadeApplier
 from bot.appliers.base import (
     ApplicationDocuments,
     ApplicationOutcome,
@@ -19,6 +20,7 @@ from bot.appliers.inhire import InHireApplier
 from bot.appliers.lever import LeverApplier
 from bot.appliers.linkedin import LinkedInApplier
 from bot.appliers.portals import GeekHunterApplier, NerdinApplier, ProgramathorApplier
+from bot.appliers.wellfound import WellfoundApplier
 from bot.profile import CandidateProfile
 
 logger = logging.getLogger("jobbot.appliers.registry")
@@ -38,6 +40,8 @@ class ApplierRegistry:
                 InHireApplier(),
                 GupyApplier(),
                 LinkedInApplier(external_dispatcher=self.dispatch),
+                WellfoundApplier(),
+                AvanadeApplier(),
                 ProgramathorApplier(),
                 GeekHunterApplier(),
                 NerdinApplier(),

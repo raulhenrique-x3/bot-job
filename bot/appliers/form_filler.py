@@ -41,21 +41,26 @@ FORM_QA_SCHEMA = {
 }
 
 _SUBMIT_BUTTON_RE = re.compile(
-    r"^(submit|submit application|apply|apply now|send application|send|"
-    r"enviar|enviar candidatura|finalizar candidatura|concluir candidatura|"
+    r"^(submit|submit application|submit your application|apply|apply now|send application|send your application|send|"
+    r"enviar|enviar candidatura|enviar candidatura simplificada|finalizar candidatura|concluir candidatura|"
     r"candidatar-se|candidatar para a vaga|finalizar|confirmar candidatura)$",
     re.IGNORECASE,
 )
 
 _NEXT_STEP_BUTTON_RE = re.compile(
-    r"^(next|continue|review|avancar|avançar|proximo|próximo|continuar|revisar|próxima etapa|proxima etapa)$",
+    r"^(next|continue|continue to next step|review|review your application|save and continue|"
+    r"avancar|avançar|proximo|próximo|continuar|continuar para a pr[oó]xima etapa|"
+    r"revisar|revisar candidatura|revisar sua candidatura|"
+    r"avaliar|avaliar candidatura|avaliar sua candidatura|"
+    r"pr[oó]xima etapa|salvar e continuar)$",
     re.IGNORECASE,
 )
 
 _ERROR_TEXT_RE = re.compile(
     r"(campo obrigat[óo]rio|preencha este campo|required field|is required|"
     r"invalid email|e-mail inv[áa]lido|telefone inv[áa]lido|formato inv[áa]lido|"
-    r"please enter|please select|voc[êe] precisa aceitar)",
+    r"please enter|please select|please make a selection|fa[çc]a uma sele[çc][aã]o|"
+    r"insira uma resposta v[áa]lida|enter a valid|voc[êe] precisa aceitar)",
     re.IGNORECASE,
 )
 
@@ -110,9 +115,16 @@ class VerifiedFactAnswerer:
         label_and_name = f"{field.label} {field.name}".strip()
         lower = label_and_name.lower()
 
-        # Standard Privacy Policy / Terms of Use checkbox (e.g. GeekHunter / ATS consent)
+        # Standard Privacy Policy / Terms of Use checkbox or radio (e.g. GeekHunter / LinkedIn JOIN ATS consent)
         if field.field_type == "checkbox" and is_privacy_terms_checkbox(label_and_name):
             return "true"
+        if field.field_type == "radio" and is_privacy_terms_checkbox(label_and_name):
+            is_en = any(w in lower for w in ("privacy", "terms", "agree", "policy"))
+            return self._pick_best_option(
+                field.options,
+                preferred=("yes", "sim", "agree", "aceito", "concordo"),
+                fallback="Yes" if is_en else "Sim",
+            )
 
         # Hard safety checks first
         rec_err = detect_recommendation_letter_request(label_and_name)
@@ -292,6 +304,13 @@ class VerifiedFactAnswerer:
                 fallback="Brasil (+55)",
             )
         if field_type == "tel" or any(k in lower for k in ("phone", "telefone", "celular", "whatsapp", "mobile")):
+            if any(k in lower for k in ("device type", "phone type", "tipo de telefone", "tipo de dispositivo")):
+                is_en = "device" in lower or "phone" in lower
+                return self._pick_best_option(
+                    field.options,
+                    preferred=("mobile", "cell", "celular"),
+                    fallback="Mobile" if is_en else "Celular",
+                )
             return self._format_phone(p.phone, lower, field.placeholder)
         if any(k in lower for k in ("first name", "primeiro nome", "nome próprio", "first_name", "fname")):
             return p.first_name
@@ -359,17 +378,155 @@ class VerifiedFactAnswerer:
                 "programathor": "Programathor",
                 "querovagas": "QueroVagas",
                 "devagas": "Devagas",
+                "avanade": "Avanade Career Site",
             }
             is_en = "how did" in lower or "hear about" in lower
             label_src = src_map.get(src, "Company Careers Page" if is_en else "Site de Carreiras da Empresa")
             if field.options:
                 prefs = (
-                    (label_src.lower(), "job board", "career", "website", "company", "other", "outro")
-                    if src not in src_map
+                    (label_src.lower(), "avanade", "career", "company", "website", "job board", "other", "outro")
+                    if src in ("avanade",) or src not in src_map
                     else (label_src.lower(), "job board", "social", "other", "outro")
                 )
                 return self._pick_best_option(field.options, preferred=prefs, fallback=label_src)
             return label_src
+
+        # Previously worked for company (Workday / Avanade / Accenture standard question)
+        if any(
+            k in lower
+            for k in (
+                "previously worked for",
+                "have you ever worked for",
+                "former employee",
+                "já trabalhou na",
+                "ja trabalhou na",
+                "trabalhou anteriormente",
+            )
+        ):
+            is_en = any(w in lower for w in ("previously", "worked", "former", "employee"))
+            return self._pick_best_option(
+                field.options,
+                preferred=("no", "não", "nao"),
+                fallback="No" if is_en else "Não",
+            )
+
+        # Technology-specific experience (e.g. profile.skill_experience_years = {"Java": "1"})
+        if p.skill_experience_years:
+            for tech, years_val in p.skill_experience_years.items():
+                # Word-boundary match so "Java" never matches "JavaScript"
+                if not re.search(rf"(?<![A-Za-z0-9_]){re.escape(tech.lower())}(?![A-Za-z0-9_])", lower):
+                    continue
+                is_years_q = (
+                    field_type == "number"
+                    or any(
+                        k in lower
+                        for k in (
+                            "how many years",
+                            "years of experience",
+                            "years experience",
+                            "quantos anos",
+                            "anos de experiência",
+                            "anos de experiencia",
+                            "tempo de experiência",
+                            "tempo de experiencia",
+                        )
+                    )
+                )
+                if is_years_q:
+                    years_digits = _digits_only(years_val) or str(years_val).strip()
+                    if field.options:
+                        return self._pick_best_option(
+                            field.options,
+                            preferred=(
+                                f"{years_digits} year",
+                                f"{years_digits} ano",
+                                f"{years_digits}-",
+                                f"{years_digits} -",
+                                f"{years_digits} a ",
+                                f"less than {int(years_digits) + 1}" if years_digits.isdigit() else years_digits,
+                                years_digits,
+                            ),
+                            fallback=years_digits,
+                        )
+                    return years_digits
+                if any(
+                    k in lower
+                    for k in (
+                        "do you have experience",
+                        "have experience",
+                        "possui experiência",
+                        "possui experiencia",
+                        "tem experiência",
+                        "tem experiencia",
+                        "conhecimento em",
+                        "proficiency",
+                    )
+                ):
+                    is_en = any(w in lower for w in ("do you", "have experience", "proficiency"))
+                    return self._pick_best_option(
+                        field.options,
+                        preferred=("yes", "sim", "1 year", "1 ano", "basic", "básico", "basico", "intermediate"),
+                        fallback="Yes" if is_en else "Sim",
+                    )
+
+        # Yes/No Brazil residence or remote work questions (must precede generic "based in" -> country)
+        if any(
+            k in lower
+            for k in (
+                "based in brazil",
+                "based in brasil",
+                "located in brazil",
+                "located in brasil",
+                "live in brazil",
+                "reside no brasil",
+                "mora no brasil",
+            )
+        ):
+            if any(b in (p.country or "").lower() for b in ("brazil", "brasil")):
+                is_en = any(w in lower for w in ("based", "located", "live", "brazil"))
+                return self._pick_best_option(
+                    field.options,
+                    preferred=("yes", "sim"),
+                    fallback="Yes" if is_en else "Sim",
+                )
+
+        if any(
+            k in lower
+            for k in (
+                "remote setting",
+                "working remotely",
+                "work remotely",
+                "trabalhar remotamente",
+                "trabalho remoto",
+            )
+        ):
+            is_en = any(w in lower for w in ("remote", "working", "work"))
+            return self._pick_best_option(
+                field.options,
+                preferred=("yes", "sim"),
+                fallback="Yes" if is_en else "Sim",
+            )
+
+        # General professional software engineering years (when not matched by a specific skill above)
+        if p.years_of_experience and any(
+            k in lower
+            for k in (
+                "years of professional experience",
+                "years of experience in software",
+                "years of software engineering",
+                "anos de experiência em desenvolvimento",
+                "anos de experiencia em desenvolvimento",
+                "anos de experiência como desenvolvedor",
+            )
+        ):
+            yrs = _digits_only(p.years_of_experience) or p.years_of_experience.strip()
+            if field.options:
+                return self._pick_best_option(
+                    field.options,
+                    preferred=(f"{yrs} year", f"{yrs} ano", f"{yrs}+", f"{yrs}-", yrs),
+                    fallback=yrs,
+                )
+            return yrs
 
         # City / UF / Location / Country
         if any(k in lower for k in ("cidade-uf", "cidade/uf", "cidade - uf", "cidade_candidato")):
@@ -394,21 +551,55 @@ class VerifiedFactAnswerer:
             if p.has_cnpj is False:
                 return self._pick_best_option(field.options, preferred=("não", "nao", "no"), fallback="Não")
 
-        # Availability / Notice period (days or text)
+        # Availability / Notice period (days, weeks, or text)
         if any(k in lower for k in ("disponibilidade_inicio_dias", "dias para inicio", "dias para início")):
             return str(p.availability_days if p.availability_days is not None else 0)
-        if any(k in lower for k in ("notice period", "disponibilidade", "start date", "availability")):
+        if any(
+            k in lower
+            for k in (
+                "notice period",
+                "disponibilidade",
+                "start date",
+                "availability",
+                "how soon can you join",
+                "when can you start",
+            )
+        ):
+            days_val = p.availability_days if p.availability_days is not None else 0
+            if "week" in lower or "semana" in lower:
+                return str(max(0, days_val // 7))
             if field_type == "number" or "dias" in lower or "days" in lower:
-                return str(p.availability_days if p.availability_days is not None else 0)
+                return str(days_val)
             return p.availability
 
         # English level (verified C1 / Avançado from resumes)
-        if any(k in lower for k in ("nivel_ingles", "nível de inglês", "nivel de ingles", "english level", "ingles", "inglês")):
+        if any(
+            k in lower
+            for k in (
+                "nivel_ingles",
+                "nível de inglês",
+                "nivel de ingles",
+                "english level",
+                "english proficiency",
+                "proficiency in english",
+                "ingles",
+                "inglês",
+            )
+        ):
             english_fact = next((l for l in p.languages if "ingl" in l.lower() or "english" in l.lower()), "")
             if english_fact:
                 return self._pick_best_option(
                     field.options,
-                    preferred=("avançado", "avancado", "c1", "advanced", "fluente", "fluent"),
+                    preferred=(
+                        "avançado",
+                        "avancado",
+                        "c1",
+                        "advanced",
+                        "professional",
+                        "profissional",
+                        "fluente",
+                        "fluent",
+                    ),
                     fallback=english_fact,
                 )
 
@@ -611,10 +802,17 @@ class PlaywrightFormFiller:
         cover_pdf = documents.cover_letter_pdf
         cover_text = documents.cover_letter_text
         any_field_found = False
+        resume_uploaded_via_btn = False
 
         for step in range(1, max_steps + 1):
             current_url = page.url or apply_url
             raw_fields = self._extract_fields(page, scope_selector=scope_selector)
+            if not raw_fields and not any_field_found and hasattr(page, "wait_for_timeout"):
+                for _ in range(5):
+                    page.wait_for_timeout(500)
+                    raw_fields = self._extract_fields(page, scope_selector=scope_selector)
+                    if raw_fields:
+                        break
             if not raw_fields and not any_field_found:
                 return ApplicationOutcome(
                     status="pending_human_action",
@@ -625,6 +823,18 @@ class PlaywrightFormFiller:
                 )
             if raw_fields:
                 any_field_found = True
+
+            # LinkedIn 2026 SDUI resume upload button (uses JS filechooser with no <input type="file"> in DOM)
+            if (
+                not resume_uploaded_via_btn
+                and documents.resume_pdf
+                and Path(documents.resume_pdf).exists()
+                and not any(f.field_type == "file" for f in raw_fields)
+            ):
+                if self._try_upload_via_button(page, scope_selector, documents.resume_pdf):
+                    resume_uploaded_via_btn = True
+                    any_field_found = True
+                    filled_fields["Currículo"] = f"[FILE] {Path(documents.resume_pdf).name}"
 
             # Lazy cover letter check per step
             if any(is_cover_letter_label(f"{f.label} {f.name}") for f in raw_fields):
@@ -693,15 +903,20 @@ class PlaywrightFormFiller:
                     dry_run=dry_run,
                 )
 
-            # Check whether this is an intermediate wizard step (Next/Próximo/Avançar/Revisar)
+            # Check whether this is an intermediate wizard step (Next/Próximo/Avançar/Revisar/Avaliar)
             # Only advance when NO final submit button is currently visible.
             has_submit = self._find_submit_button(page, scope_selector=scope_selector) is not None
             if not has_submit and step < max_steps:
                 next_btn = self._find_next_button(page, scope_selector=scope_selector)
                 if next_btn is not None:
+                    before_sig = self._step_signature(page, scope_selector=scope_selector)
                     try:
+                        try:
+                            next_btn.scroll_into_view_if_needed(timeout=2000)
+                        except Exception:  # noqa: BLE001
+                            pass
                         next_btn.click(timeout=5000)
-                        page.wait_for_timeout(1200)
+                        page.wait_for_timeout(900)
                     except Exception as exc:  # noqa: BLE001
                         return ApplicationOutcome(
                             status="pending_human_action",
@@ -723,6 +938,22 @@ class PlaywrightFormFiller:
                             filled_fields=filled_fields,
                             dry_run=dry_run,
                         )
+                    after_sig = self._step_signature(page, scope_selector=scope_selector)
+                    if before_sig and after_sig == before_sig:
+                        page.wait_for_timeout(900)
+                        after_sig = self._step_signature(page, scope_selector=scope_selector)
+                    if before_sig and after_sig == before_sig:
+                        val_err = self._visible_validation_error(page, scope_selector=scope_selector)
+                        detail = f": {val_err}" if val_err else " (verifique campos obrigatórios na etapa)."
+                        return ApplicationOutcome(
+                            status="pending_human_action",
+                            platform=platform,
+                            apply_url=page.url or current_url,
+                            reason=f"Etapa {step} do formulário não avançou após clicar em continuar{detail}",
+                            cover_letter_requested=cover_letter_requested,
+                            filled_fields=filled_fields,
+                            dry_run=dry_run,
+                        )
                     continue
             break
 
@@ -737,8 +968,19 @@ class PlaywrightFormFiller:
                 dry_run=dry_run,
             )
 
-        # Dry-run stops cleanly right before clicking Submit
+        # Dry-run stops cleanly right before clicking Submit — still verify Submit button is reachable
+        submit_btn = self._find_submit_button(page, scope_selector=scope_selector)
         if dry_run:
+            if submit_btn is None:
+                return ApplicationOutcome(
+                    status="pending_human_action",
+                    platform=platform,
+                    apply_url=page.url or current_url,
+                    reason="[DRY-RUN] Formulário preenchido, mas botão final de envio não foi alcançado.",
+                    cover_letter_requested=cover_letter_requested,
+                    filled_fields=filled_fields,
+                    dry_run=True,
+                )
             return ApplicationOutcome(
                 status="documents_ready",
                 platform=platform,
@@ -750,7 +992,6 @@ class PlaywrightFormFiller:
             )
 
         # Final Submit & demand explicit platform confirmation
-        submit_btn = self._find_submit_button(page, scope_selector=scope_selector)
         if submit_btn is None:
             return ApplicationOutcome(
                 status="pending_human_action",
@@ -781,6 +1022,10 @@ class PlaywrightFormFiller:
             pass
 
         try:
+            try:
+                submit_btn.scroll_into_view_if_needed(timeout=2000)
+            except Exception:  # noqa: BLE001
+                pass
             submit_btn.click(timeout=8000)
         except Exception as exc:  # noqa: BLE001
             return ApplicationOutcome(
@@ -794,13 +1039,27 @@ class PlaywrightFormFiller:
                 dry_run=False,
             )
 
-        try:
-            page.wait_for_load_state("networkidle", timeout=min(timeout_seconds * 1000, 12000))
-        except Exception:  # noqa: BLE001
-            page.wait_for_timeout(3000)
-
+        # Poll for explicit confirmation / validation error instead of blocking on `networkidle`
+        # (SPAs like LinkedIn stream background telemetry and never reach networkidle).
         post_url = page.url or current_url
-        post_text = page.inner_text("body") if page.locator("body").count() else ""
+        post_text = ""
+        confirmed = False
+        conf_id = ""
+        max_wait_ms = min(timeout_seconds * 1000, 7000)
+        waited_ms = 0
+        while waited_ms < max_wait_ms:
+            page.wait_for_timeout(500)
+            waited_ms += 500
+            try:
+                post_url = page.url or current_url
+                post_text = page.inner_text("body") if page.locator("body").count() else ""
+            except Exception:  # noqa: BLE001
+                continue
+            confirmed, conf_id = detect_submission_confirmation(post_url, post_text)
+            if confirmed:
+                break
+            if self._visible_validation_error(page, scope_selector=scope_selector):
+                break
 
         captcha_after = detect_active_captcha_on_page(page)
         if captcha_after:
@@ -814,7 +1073,6 @@ class PlaywrightFormFiller:
                 dry_run=False,
             )
 
-        confirmed, conf_id = detect_submission_confirmation(post_url, post_text)
         if confirmed:
             return ApplicationOutcome(
                 status="applied",
@@ -827,8 +1085,9 @@ class PlaywrightFormFiller:
             )
 
         # Check if visible validation errors remained on screen
+        val_err = self._visible_validation_error(page, scope_selector=scope_selector)
         err_match = _ERROR_TEXT_RE.search(post_text[:4000])
-        detail = f" Erro de validação visível: '{err_match.group(0)}'." if err_match else ""
+        detail = f" Erro de validação visível: '{val_err or err_match.group(0)}'." if (val_err or err_match) else ""
         return ApplicationOutcome(
             status="pending_human_action",
             platform=platform,
@@ -841,15 +1100,25 @@ class PlaywrightFormFiller:
 
     @staticmethod
     def _extract_fields(page: Any, *, scope_selector: str | None = None) -> list[FormField]:
-        js = """(scopeSel) => {
-            const IGNORE_NOISE = /(newsletter|cookie|consent|analytics|ads|search|busca|pesquisa|password|senha|login|signin|g-recaptcha-response|h-captcha-response|cf-turnstile-response)/i;
+        js = r"""(scopeSel) => {
+            const IGNORE_NOISE = /(newsletter|cookie|consent|analytics|ads|search|busca|pesquisa|password|senha|login|signin|beecatcher|robots only|g-recaptcha-response|h-captcha-response|cf-turnstile-response)/i;
             document.querySelectorAll('[data-jobbot-field]').forEach(e => e.removeAttribute('data-jobbot-field'));
+            document.querySelectorAll('[data-jobbot-radio-group]').forEach(e => {
+                e.removeAttribute('data-jobbot-radio-group');
+                e.removeAttribute('data-jobbot-radio-opt');
+            });
             let root = document;
             if (scopeSel) {
-                const scoped = document.querySelector(scopeSel);
-                if (scoped) root = scoped;
+                const matches = Array.from(document.querySelectorAll(scopeSel));
+                const visibleMatch = matches.find(m => {
+                    const s = window.getComputedStyle(m);
+                    const r = m.getBoundingClientRect();
+                    return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 50 && r.height > 50;
+                });
+                if (visibleMatch) root = visibleMatch;
+                else if (matches[0]) root = matches[0];
             }
-            // Prefer inputs inside a non-newsletter/non-search <form>, fallback to all inputs in root (Ashby/React SPAs)
+            // Prefer inputs inside a non-newsletter/non-search <form>, fallback to all inputs in root (Ashby/React/LinkedIn SDUI)
             let candidates = [];
             const forms = Array.from(root.querySelectorAll('form')).filter(f => {
                 const meta = ((f.id || '') + ' ' + (f.className || '') + ' ' + (f.action || '')).toLowerCase();
@@ -867,6 +1136,26 @@ class PlaywrightFormFiller:
 
             const out = [];
             let autoIdx = 0;
+            const handledRadioGroups = new Set();
+
+            const radioOptionText = (r) => {
+                if (r.id) {
+                    const lbl = document.querySelector(`label[for="${CSS.escape(r.id)}"]`);
+                    if (lbl && lbl.innerText.trim()) return lbl.innerText.trim();
+                }
+                const parentLbl = r.closest('label');
+                if (parentLbl && parentLbl.innerText.trim()) return parentLbl.innerText.trim();
+                // LinkedIn 2026 SDUI: <div><input type="radio"><label for=...></label></div><div><p>Yes</p></div>
+                const p = r.parentElement;
+                if (p && p.nextElementSibling && p.nextElementSibling.innerText.trim()) {
+                    return p.nextElementSibling.innerText.trim();
+                }
+                if (p && p.parentElement && p.parentElement.innerText.trim()) {
+                    return p.parentElement.innerText.trim();
+                }
+                return r.value && r.value !== 'on' ? r.value : '';
+            };
+
             for (const el of candidates) {
                 const tag = el.tagName.toLowerCase();
                 const type = (el.getAttribute('type') || tag).toLowerCase();
@@ -880,6 +1169,72 @@ class PlaywrightFormFiller:
                     if (banner && banner !== el && !(type === 'checkbox' && el.closest('form'))) {
                         continue;
                     }
+                }
+
+                // Group radio buttons by name (supports LinkedIn SDUI visually-hidden sr-only radios inside visible fieldsets)
+                if (type === 'radio' && el.name) {
+                    if (handledRadioGroups.has(el.name)) continue;
+                    handledRadioGroups.add(el.name);
+                    const groupEls = candidates.filter(c => c.tagName.toLowerCase() === 'input' && (c.getAttribute('type') || '').toLowerCase() === 'radio' && c.name === el.name && !c.disabled);
+                    const container = el.closest('fieldset, [role="radiogroup"]') || el.parentElement?.parentElement || el.parentElement;
+                    if (!container) continue;
+                    const cs = window.getComputedStyle(container);
+                    const cr = container.getBoundingClientRect();
+                    if (cs.display === 'none' || cs.visibility === 'hidden' || cr.width <= 1 || cr.height <= 1) continue;
+
+                    const firstAria = (el.getAttribute('aria-label') || '').trim();
+                    // Skip LinkedIn's saved-resume radio selector (already handled via upload or pre-selected)
+                    if (/\.(pdf|docx?)$/i.test(firstAria)) continue;
+
+                    let qLabel = firstAria;
+                    if (!qLabel) {
+                        const ariaBy = el.getAttribute('aria-labelledby') || container.getAttribute('aria-labelledby') || '';
+                        if (ariaBy) {
+                            qLabel = ariaBy.split(/\s+/).map(id => document.getElementById(id)?.innerText || '').join(' ').trim();
+                        }
+                    }
+                    if (!qLabel) {
+                        const legend = container.querySelector('legend');
+                        if (legend) qLabel = legend.innerText.trim();
+                    }
+                    if (!qLabel) {
+                        qLabel = (container.getAttribute('aria-label') || '').trim();
+                    }
+                    if (!qLabel) continue;
+                    if (IGNORE_NOISE.test(`${el.name} ${qLabel}`)) {
+                        if (!/(privacidade|privacy|termos|terms|lgpd|tratamento dos meus dados|concordo)/i.test(qLabel)) {
+                            continue;
+                        }
+                    }
+
+                    const opts = [];
+                    autoIdx += 1;
+                    const marker = `jb-fld-${autoIdx}`;
+                    for (const r of groupEls) {
+                        const optTxt = radioOptionText(r).replace(/\s+/g, ' ').trim();
+                        if (!optTxt) continue;
+                        r.setAttribute('data-jobbot-radio-group', marker);
+                        r.setAttribute('data-jobbot-radio-opt', optTxt);
+                        opts.push(optTxt);
+                    }
+                    if (opts.length === 0) continue;
+                    el.setAttribute('data-jobbot-field', marker);
+                    const anyChecked = groupEls.some(r => r.checked);
+                    const req = Boolean(
+                        groupEls.some(r => r.required || r.getAttribute('aria-required') === 'true') ||
+                        qLabel.includes('*') ||
+                        (!anyChecked && container.hasAttribute('aria-describedby'))
+                    );
+                    out.push({
+                        name: el.name,
+                        label: qLabel.replace(/\s+/g, ' ').trim(),
+                        field_type: 'radio',
+                        required: req,
+                        selector: `[data-jobbot-field="${marker}"]`,
+                        options: opts,
+                        placeholder: '',
+                    });
+                    continue;
                 }
 
                 const style = window.getComputedStyle(el);
@@ -934,7 +1289,7 @@ class PlaywrightFormFiller:
                 if (!label) {
                     const ariaBy = el.getAttribute('aria-labelledby') || '';
                     if (ariaBy) {
-                        label = ariaBy.split(/\\s+/).map(id => document.getElementById(id)?.innerText || '').join(' ').trim();
+                        label = ariaBy.split(/\s+/).map(id => document.getElementById(id)?.innerText || '').join(' ').trim();
                     }
                 }
                 const placeholder = el.getAttribute('placeholder') || '';
@@ -942,7 +1297,7 @@ class PlaywrightFormFiller:
                     label = el.getAttribute('aria-label') || placeholder || el.name || '';
                 }
 
-                const noiseCheck = `${el.id || ''} ${el.name || ''} ${label}`;
+                const noiseCheck = `${el.id || ''} ${el.name || ''} ${el.getAttribute('data-automation-id') || ''} ${label}`;
                 if (type !== 'file' && IGNORE_NOISE.test(noiseCheck)) {
                     // Allow privacy/terms/LGPD consent checkbox even if id/name/label contains "consent" or "cookies"
                     if (!(type === 'checkbox' && /(privacidade|privacy|termos|terms|lgpd|tratamento dos meus dados|concordo)/i.test(label))) {
@@ -972,7 +1327,7 @@ class PlaywrightFormFiller:
 
                 out.push({
                     name: el.name || el.id || '',
-                    label: label.replace(/\\s+/g, ' ').trim(),
+                    label: label.replace(/\s+/g, ' ').trim(),
                     field_type: resolvedType,
                     required,
                     selector,
@@ -988,6 +1343,118 @@ class PlaywrightFormFiller:
             logger.warning("DOM form extraction failed: %s", exc)
             return []
         return [FormField(**item) for item in items]
+
+    @staticmethod
+    def _try_upload_via_button(page: Any, scope_selector: str | None, resume_pdf: str) -> bool:
+        """Upload resume PDF via LinkedIn SDUI 'Carregar currículo' / 'Upload resume' button filechooser."""
+        if not hasattr(page, "expect_file_chooser") or not hasattr(page, "evaluate"):
+            return False
+        try:
+            found = page.evaluate(
+                r"""(scopeSel) => {
+                    document.querySelectorAll('[data-jobbot-upload-btn]').forEach(e => e.removeAttribute('data-jobbot-upload-btn'));
+                    let root = document;
+                    if (scopeSel) {
+                        const ms = Array.from(document.querySelectorAll(scopeSel));
+                        root = ms.find(m => {
+                            const s = getComputedStyle(m);
+                            const r = m.getBoundingClientRect();
+                            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 50 && r.height > 50;
+                        }) || ms[0] || document;
+                    }
+                    const btns = Array.from(root.querySelectorAll('button'));
+                    for (const b of btns) {
+                        const s = getComputedStyle(b);
+                        const r = b.getBoundingClientRect();
+                        if (s.display === 'none' || s.visibility === 'hidden' || r.width < 10 || r.height < 10) continue;
+                        const txt = (b.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        if (txt === 'carregar currículo' || txt === 'carregar curriculo' || txt === 'upload resume') {
+                            b.setAttribute('data-jobbot-upload-btn', '1');
+                            return true;
+                        }
+                    }
+                    return false;
+                }""",
+                scope_selector,
+            )
+            if not found:
+                return False
+            btn = page.locator("[data-jobbot-upload-btn='1']").first
+            with page.expect_file_chooser(timeout=2500) as fc_info:
+                btn.click(timeout=3000)
+            fc_info.value.set_files(resume_pdf)
+            page.wait_for_timeout(1200)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Resume button filechooser upload skipped: %s", exc)
+            return False
+
+    @staticmethod
+    def _step_signature(page: Any, *, scope_selector: str | None = None) -> str:
+        if not hasattr(page, "evaluate"):
+            return ""
+        try:
+            return str(
+                page.evaluate(
+                    r"""(scopeSel) => {
+                        let root = document;
+                        if (scopeSel) {
+                            const ms = Array.from(document.querySelectorAll(scopeSel));
+                            root = ms.find(m => {
+                                const s = getComputedStyle(m);
+                                const r = m.getBoundingClientRect();
+                                return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 50 && r.height > 50;
+                            }) || ms[0] || document;
+                        }
+                        const textNode = root === document ? document.body : root;
+                        const txt = ((textNode && textNode.innerText) || '').replace(/\s+/g, ' ').trim().slice(0, 260);
+                        const visCnt = Array.from(root.querySelectorAll('input, select, textarea, button')).filter(el => {
+                            const s = getComputedStyle(el);
+                            const r = el.getBoundingClientRect();
+                            return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 1 && r.height > 1;
+                        }).length;
+                        return `${location.href}|${visCnt}|${txt}`;
+                    }""",
+                    scope_selector,
+                )
+                or ""
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+
+    @staticmethod
+    def _visible_validation_error(page: Any, *, scope_selector: str | None = None) -> str:
+        if not hasattr(page, "evaluate"):
+            return ""
+        try:
+            return str(
+                page.evaluate(
+                    r"""(scopeSel) => {
+                        let root = document;
+                        if (scopeSel) {
+                            const ms = Array.from(document.querySelectorAll(scopeSel));
+                            root = ms.find(m => {
+                                const s = getComputedStyle(m);
+                                const r = m.getBoundingClientRect();
+                                return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 50 && r.height > 50;
+                            }) || ms[0] || document;
+                        }
+                        const errs = root.querySelectorAll('[role="alert"], .artdeco-inline-feedback--error, [id^="error-message-"], [class*="error-message" i]');
+                        for (const el of errs) {
+                            const s = getComputedStyle(el);
+                            const r = el.getBoundingClientRect();
+                            if (s.display === 'none' || s.visibility === 'hidden' || r.width < 2 || r.height < 2) continue;
+                            const txt = (el.innerText || '').replace(/\s+/g, ' ').trim();
+                            if (txt) return txt.slice(0, 160);
+                        }
+                        return '';
+                    }""",
+                    scope_selector,
+                )
+                or ""
+            )
+        except Exception:  # noqa: BLE001
+            return ""
 
     @staticmethod
     def _fill_control(page: Any, fld: FormField, answer: str) -> None:
@@ -1066,6 +1533,46 @@ class PlaywrightFormFiller:
                 except Exception:  # noqa: BLE001
                     loc.click(force=True)
         elif fld.field_type == "radio":
+            marker_match = re.search(r'data-jobbot-field="([^"]+)"', fld.selector)
+            if marker_match and fld.options and hasattr(page, "evaluate"):
+                marker = marker_match.group(1)
+                nans = _norm(answer)
+                # Prefer exact match, then substring match among group options
+                chosen_idx = -1
+                for idx, opt in enumerate(fld.options):
+                    if _norm(opt) == nans:
+                        chosen_idx = idx
+                        break
+                if chosen_idx < 0:
+                    for idx, opt in enumerate(fld.options):
+                        nopt = _norm(opt)
+                        if nans and (nans in nopt or nopt in nans):
+                            chosen_idx = idx
+                            break
+                if chosen_idx < 0:
+                    raise HumanInterventionRequired(
+                        f"Opção '{answer}' não encontrada no grupo de opções '{fld.label or fld.name}' (opções: {', '.join(fld.options[:5])}).",
+                        category="select_mismatch",
+                    )
+                target_radio = page.locator(f'[data-jobbot-radio-group="{marker}"]').nth(chosen_idx)
+                try:
+                    target_radio.check(force=True, timeout=3000)
+                    return
+                except Exception:  # noqa: BLE001
+                    pass
+                # Fallback: click associated <label for> or visual wrapper
+                page.evaluate(
+                    """([m, idx]) => {
+                        const radios = document.querySelectorAll(`[data-jobbot-radio-group="${m}"]`);
+                        const r = radios[idx];
+                        if (!r) return;
+                        const lbl = r.id ? document.querySelector(`label[for="${CSS.escape(r.id)}"]`) : null;
+                        if (lbl) lbl.click();
+                        else r.click();
+                    }""",
+                    [marker, chosen_idx],
+                )
+                return
             loc.check(force=True)
         else:
             loc.click(timeout=3000)
@@ -1097,7 +1604,80 @@ class PlaywrightFormFiller:
             yield locator.nth(i)
 
     @classmethod
+    def _find_action_button_fast(cls, page: Any, kind: str, scope_selector: str | None = None):
+        """Single-evaluate button finder for real Playwright pages (no 30-button cap or IPC thrashing)."""
+        js = r"""(scopeSel) => {
+            document.querySelectorAll('[data-jobbot-btn-idx]').forEach(e => e.removeAttribute('data-jobbot-btn-idx'));
+            let root = document;
+            if (scopeSel) {
+                const ms = Array.from(document.querySelectorAll(scopeSel));
+                const vis = ms.find(m => {
+                    const s = getComputedStyle(m);
+                    const r = m.getBoundingClientRect();
+                    return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 50 && r.height > 50;
+                });
+                if (vis) root = vis;
+                else if (ms[0]) root = ms[0];
+            }
+            const els = Array.from(root.querySelectorAll('form button, form input[type="submit"], button[type="submit"], button'));
+            const seen = new Set();
+            const out = [];
+            let idx = 0;
+            for (const el of els) {
+                if (seen.has(el)) continue;
+                seen.add(el);
+                const s = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity || '1') === 0 || r.width < 2 || r.height < 2) {
+                    continue;
+                }
+                idx += 1;
+                el.setAttribute('data-jobbot-btn-idx', String(idx));
+                out.push({
+                    idx,
+                    text: (el.innerText || el.value || '').replace(/\s+/g, ' ').trim(),
+                    aria: (el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim(),
+                    type: (el.getAttribute('type') || '').toLowerCase(),
+                    isSubmitAttr: el.hasAttribute('data-live-test-easy-apply-submit-button'),
+                    isNextAttr: el.hasAttribute('data-easy-apply-next-button'),
+                });
+            }
+            return out;
+        }"""
+        try:
+            buttons = page.evaluate(js, scope_selector) or []
+        except Exception:  # noqa: BLE001
+            return None
+
+        fallback_idx: int | None = None
+        for b in buttons:
+            txt = b.get("text") or ""
+            aria = b.get("aria") or ""
+            btn_type = b.get("type") or ""
+            if kind == "submit":
+                if b.get("isSubmitAttr"):
+                    return page.locator(f'[data-jobbot-btn-idx="{b["idx"]}"]').first
+                if _NEXT_STEP_BUTTON_RE.match(txt) or (not txt and _NEXT_STEP_BUTTON_RE.match(aria)):
+                    continue
+                if _SUBMIT_BUTTON_RE.match(txt) or (aria and _SUBMIT_BUTTON_RE.match(aria)):
+                    return page.locator(f'[data-jobbot-btn-idx="{b["idx"]}"]').first
+                if btn_type == "submit" and fallback_idx is None:
+                    if not re.search(r"search|busca|pesquis|inscrev|newsletter|entrar|login", f"{txt} {aria}", re.I):
+                        fallback_idx = b["idx"]
+            else:
+                if b.get("isNextAttr"):
+                    return page.locator(f'[data-jobbot-btn-idx="{b["idx"]}"]').first
+                if _NEXT_STEP_BUTTON_RE.match(txt) or (aria and _NEXT_STEP_BUTTON_RE.match(aria)):
+                    return page.locator(f'[data-jobbot-btn-idx="{b["idx"]}"]').first
+
+        if kind == "submit" and fallback_idx is not None:
+            return page.locator(f'[data-jobbot-btn-idx="{fallback_idx}"]').first
+        return None
+
+    @classmethod
     def _find_submit_button(cls, page: Any, *, scope_selector: str | None = None):
+        if hasattr(page, "evaluate"):
+            return cls._find_action_button_fast(page, "submit", scope_selector=scope_selector)
         fallback_submit = None
         for btn in cls._iter_buttons(page, scope_selector=scope_selector):
             try:
@@ -1105,10 +1685,11 @@ class PlaywrightFormFiller:
                     continue
                 txt = (btn.inner_text(timeout=300) or btn.get_attribute("value") or "").strip()
                 txt_clean = re.sub(r"\s+", " ", txt)
+                aria_clean = re.sub(r"\s+", " ", (btn.get_attribute("aria-label") or "").strip())
                 btn_type = (btn.get_attribute("type") or "").lower()
                 if _NEXT_STEP_BUTTON_RE.match(txt_clean):
                     continue
-                if _SUBMIT_BUTTON_RE.match(txt_clean):
+                if _SUBMIT_BUTTON_RE.match(txt_clean) or (aria_clean and _SUBMIT_BUTTON_RE.match(aria_clean)):
                     return btn
                 if btn_type == "submit" and fallback_submit is None:
                     # Exclude search/newsletter submit buttons
@@ -1120,12 +1701,15 @@ class PlaywrightFormFiller:
 
     @classmethod
     def _find_next_button(cls, page: Any, *, scope_selector: str | None = None):
+        if hasattr(page, "evaluate"):
+            return cls._find_action_button_fast(page, "next", scope_selector=scope_selector)
         for btn in cls._iter_buttons(page, scope_selector=scope_selector):
             try:
                 if not btn.is_visible(timeout=300):
                     continue
                 txt = re.sub(r"\s+", " ", (btn.inner_text(timeout=300) or btn.get_attribute("value") or "").strip())
-                if _NEXT_STEP_BUTTON_RE.match(txt):
+                aria = re.sub(r"\s+", " ", (btn.get_attribute("aria-label") or "").strip())
+                if _NEXT_STEP_BUTTON_RE.match(txt) or (aria and _NEXT_STEP_BUTTON_RE.match(aria)):
                     return btn
             except Exception:  # noqa: BLE001
                 continue

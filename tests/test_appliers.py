@@ -573,6 +573,8 @@ def test_portal_expired_detection_and_devagas_removed():
         "weworkremotely",
         "jobicy",
         "workingnomads",
+        "wellfound",
+        "avanade",
     }
 
 
@@ -615,3 +617,188 @@ def test_linkedin_profile_queries_easy_apply_url_and_mfa_query_param_guard():
     assert parsed[0]["title"] == "Full-stack Engineer"
     assert parsed[0]["company"] == "Avenue Code"
     assert parsed[0]["remote"] is True
+
+
+def test_iter_buttons_scopes_comma_separated_modal_selector():
+    from bot.appliers.form_filler import PlaywrightFormFiller
+
+    class _FakeBtn:
+        def __init__(self, text: str, btn_type: str = "button"):
+            self._text = text
+            self._type = btn_type
+
+        def is_visible(self, timeout: int = 300) -> bool:
+            return True
+
+        def inner_text(self, timeout: int = 300) -> str:
+            return self._text
+
+        def get_attribute(self, name: str):
+            return self._type if name == "type" else None
+
+    class _FakeLocator:
+        def __init__(self, items):
+            self._items = items
+            self.scoped_queries: list[str] = []
+
+        @property
+        def first(self):
+            return self
+
+        def locator(self, css: str):
+            self.scoped_queries.append(css)
+            return _FakeLocator(self._items)
+
+        def count(self) -> int:
+            return len(self._items)
+
+        def nth(self, idx: int):
+            return self._items[idx]
+
+    class _FakePage:
+        def __init__(self, modal_loc):
+            self._modal_loc = modal_loc
+            self.root_queries: list[str] = []
+
+        def locator(self, css: str):
+            self.root_queries.append(css)
+            return self._modal_loc
+
+    submit_btn = _FakeBtn("Submit application")
+    modal_loc = _FakeLocator([_FakeBtn("Upload resume"), submit_btn])
+    page = _FakePage(modal_loc)
+    scope = "dialog[data-testid='dialog'], [data-testid='dialog-content'], .jobs-easy-apply-modal, [role='dialog']"
+
+    found = PlaywrightFormFiller._find_submit_button(page, scope_selector=scope)
+    assert found is submit_btn
+    assert page.root_queries == [scope]
+    assert modal_loc.scoped_queries == ["form button, form input[type='submit'], button[type='submit'], button"]
+
+
+def test_linkedin_apply_cta_priority_and_sdui_avaliar_radio_wizard(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.appliers.linkedin import LinkedInApplier
+
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+        phone="+55 81 98683-8081",
+        city="Recife",
+        state="PE",
+        country="Brazil",
+        years_of_experience="4+",
+        availability="Imediata",
+        availability_days=0,
+        languages=["Português", "Inglês Avançado (C1)"],
+    )
+
+    # 1. Page with misleading links/titles BEFORE the real Easy Apply CTA
+    html_job = """
+    <html><body>
+      <header><a href="/jobs/apply">Apply Jobs</a></header>
+      <main>
+        <a href="/jobs/view/999/">Applied AI Engineer</a>
+        <div componentkey="job-card-component-ref-1"><button>Easy Apply</button></div>
+        <a href="https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fexample.com%2Finfo">Why Apply Through Jobgether?</a>
+        <button id="real-easy" type="button" aria-label="Usar a candidatura simplificada para esta vaga">Candidatura simplificada</button>
+      </main>
+    </body></html>
+    """
+
+    # 2. LinkedIn 2026 SDUI multi-step modal: hidden unrelated dialog first, then visible modal with
+    #    Avançar -> hidden sr-only radio group + Avaliar -> Enviar candidatura
+    html_modal = """
+    <html><body>
+      <div role="dialog" style="display:none;"><button>Noise</button></div>
+      <dialog data-testid="dialog" open style="display:flex; width:800px; height:650px;">
+        <div id="s1">
+          <label for="fn">First name*</label><input id="fn" type="text" required value="" />
+          <label for="ln">Last name*</label><input id="ln" type="text" required value="" />
+          <button type="button" onclick="document.getElementById('s1').style.display='none';document.getElementById('s2').style.display='block';">Avançar</button>
+        </div>
+        <div id="s2" style="display:none;">
+          <fieldset aria-describedby="error-message-1" role="radiogroup">
+            <div>
+              <div><input id="r1" type="radio" name="rg1" aria-label="Are you currently based in Brazil?" style="opacity:0;width:0;height:0;"><label for="r1"></label></div>
+              <div><p>Yes</p></div>
+            </div>
+            <div>
+              <div><input id="r2" type="radio" name="rg1" aria-label="Are you currently based in Brazil?" style="opacity:0;width:0;height:0;"><label for="r2"></label></div>
+              <div><p>No</p></div>
+            </div>
+          </fieldset>
+          <fieldset aria-describedby="error-message-2" role="radiogroup">
+            <div>
+              <div><input id="e1" type="radio" name="rg2" aria-label="What is your level of proficiency in English?" style="opacity:0;width:0;height:0;"><label for="e1"></label></div>
+              <div><p>None</p></div>
+            </div>
+            <div>
+              <div><input id="e2" type="radio" name="rg2" aria-label="What is your level of proficiency in English?" style="opacity:0;width:0;height:0;"><label for="e2"></label></div>
+              <div><p>Professional</p></div>
+            </div>
+          </fieldset>
+          <button type="button" onclick="
+            if (!document.getElementById('r1').checked || !document.getElementById('e2').checked) {
+              document.getElementById('err').style.display='block';
+              return;
+            }
+            document.getElementById('s2').style.display='none';
+            document.getElementById('s3').style.display='block';
+          ">Avaliar</button>
+          <div id="err" role="alert" style="display:none;">Faça uma seleção</div>
+        </div>
+        <div id="s3" style="display:none;">
+          <p>Revise sua candidatura</p>
+          <button type="button" onclick="document.body.innerHTML='<h1>Candidatura enviada</h1>';">Enviar candidatura</button>
+        </div>
+      </dialog>
+    </body></html>
+    """
+
+    scope = "dialog[data-testid='dialog'], .jobs-easy-apply-modal, [data-testid='dialog-content'], [role='dialog']"
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        p1 = browser.new_page()
+        p1.set_content(html_job)
+        btn, is_easy = LinkedInApplier._find_apply_button(p1)
+        assert btn is not None and is_easy is True
+        assert btn.get_attribute("id") == "real-easy"
+        p1.close()
+
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=False, allow_salary_web=False)
+        p2 = browser.new_page()
+        p2.set_content(html_modal)
+        out_dry = filler.run_on_page(
+            p2,
+            platform="linkedin_easy_apply",
+            apply_url="https://www.linkedin.com/jobs/view/123/",
+            job={"id": "li:123", "title": "Fullstack", "company": "Acme"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=True,
+            scope_selector=scope,
+            max_steps=8,
+        )
+        assert out_dry.status == "documents_ready"
+        assert out_dry.filled_fields["Are you currently based in Brazil?"] == "Yes"
+        assert out_dry.filled_fields["What is your level of proficiency in English?"] == "Professional"
+        p2.close()
+
+        p3 = browser.new_page()
+        p3.set_content(html_modal)
+        out_live = filler.run_on_page(
+            p3,
+            platform="linkedin_easy_apply",
+            apply_url="https://www.linkedin.com/jobs/view/123/",
+            job={"id": "li:123", "title": "Fullstack", "company": "Acme"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=False,
+            scope_selector=scope,
+            max_steps=8,
+        )
+        assert out_live.status == "applied"
+        p3.close()
+        browser.close()

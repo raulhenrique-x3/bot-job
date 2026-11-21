@@ -179,3 +179,71 @@ def test_jobicy_and_workingnomads_parsers():
     ])
     assert len(wn_jobs) == 1
     assert wn_jobs[0]["title"] == "Senior React Developer"
+
+
+def test_wellfound_scraper_next_data_dom_fallback_and_applier_registration():
+    from bot.appliers.registry import ApplierRegistry
+    from bot.appliers.wellfound import WellfoundApplier, _trim_note
+    from bot.login import TARGETS
+    from bot.scrapers.wellfound import WellfoundScraper
+
+    assert "wellfound" in TARGETS
+    assert TARGETS["wellfound"]["state"] == "state/auth_wellfound.json"
+    assert detect_platform("https://wellfound.com/company/acme/jobs/123456-fullstack") == "wellfound"
+    assert isinstance(
+        ApplierRegistry().select("https://wellfound.com/jobs/123456", {"source": "wellfound"}),
+        WellfoundApplier,
+    )
+
+    next_html = """
+    <html><head></head><body>
+    <script id="__NEXT_DATA__" type="application/json">
+    {
+      "props": {
+        "pageProps": {
+          "apolloState": {
+            "data": {
+              "StartupResult:10": {
+                "__typename": "StartupResult",
+                "name": "LatamStartup",
+                "slug": "latam-startup",
+                "highlightedJobListings": [{"__ref": "JobListing:98765"}]
+              },
+              "JobListing:98765": {
+                "__typename": "JobListing",
+                "id": "98765",
+                "slug": "98765-senior-fullstack-engineer",
+                "title": "Senior Fullstack Engineer",
+                "remote": true,
+                "locationNames": ["Remote", "Latin America"],
+                "compensation": "$90k - $120k",
+                "description": "<p>Build React + Python systems. LATAM contractor welcome.</p>"
+              }
+            }
+          }
+        }
+      }
+    }
+    </script>
+    </body></html>
+    """
+    wf = WellfoundScraper(browser=None)
+    parsed = wf._parse_listing(next_html)
+    assert len(parsed) == 1
+    assert parsed[0]["id"] == "wf:98765"
+    assert parsed[0]["company"] == "LatamStartup"
+    assert parsed[0]["url"] == "https://wellfound.com/company/latam-startup/jobs/98765-senior-fullstack-engineer"
+    assert parsed[0]["remote"] is True
+    assert "LATAM contractor" in parsed[0]["body"]
+
+    dom_html = '<div><a href="/company/cool-ai/jobs/555111-python-engineer">Python Engineer</a></div>'
+    dom_parsed = wf._parse_listing(dom_html)
+    assert len(dom_parsed) == 1
+    assert dom_parsed[0]["id"] == "wf:555111"
+    assert dom_parsed[0]["company"] == "Cool Ai"
+
+    long_note = "word " * 300
+    trimmed = _trim_note(long_note, max_chars=100)
+    assert len(trimmed) <= 100
+    assert trimmed.endswith("...")
+

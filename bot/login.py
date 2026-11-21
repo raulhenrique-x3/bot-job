@@ -5,6 +5,8 @@ Usage:
   .venv/bin/python -m bot.login programathor
   .venv/bin/python -m bot.login geekhunter
   .venv/bin/python -m bot.login gupy
+  .venv/bin/python -m bot.login wellfound
+  .venv/bin/python -m bot.login avanade
 Saves storage_state to state/auth_*.json with restricted 0600 permissions.
 """
 
@@ -42,6 +44,18 @@ TARGETS = {
         "state": "state/auth_gupy.json",
         "check_url": "https://portal.gupy.io/",
         "auth_fail": ("/login", "/signin"),
+    },
+    "wellfound": {
+        "url": "https://wellfound.com/login",
+        "state": "state/auth_wellfound.json",
+        "check_url": "https://wellfound.com/jobs",
+        "auth_fail": ("/login", "/signup", "/onboarding"),
+    },
+    "avanade": {
+        "url": "https://accenture.wd103.myworkdayjobs.com/en-US/AvanadeCareers/login",
+        "state": "state/auth_avanade.json",
+        "check_url": "https://accenture.wd103.myworkdayjobs.com/en-US/AvanadeCareers/userHome",
+        "auth_fail": ("/login",),
     },
 }
 
