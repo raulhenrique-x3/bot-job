@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from bot.appliers.base import (
     ApplicationDocuments,
@@ -68,6 +69,15 @@ def _digits_only(text: str) -> str:
     return re.sub(r"\D+", "", text or "")
 
 
+_HUMAN_ANSWER_PROVIDER: Callable[[str | None], dict[str, str]] | None = None
+
+
+def set_human_answer_provider(provider: Callable[[str | None], dict[str, str]] | None) -> None:
+    """Register callable(job_id) -> {question: answer} for candidate-confirmed answers."""
+    global _HUMAN_ANSWER_PROVIDER
+    _HUMAN_ANSWER_PROVIDER = provider
+
+
 class VerifiedFactAnswerer:
     """Answers form fields deterministically from profile + Glassdoor salary research + strict AI Q&A."""
 
@@ -93,6 +103,10 @@ class VerifiedFactAnswerer:
         cover_letter_text: str = "",
     ) -> str | None:
         """Return verified answer for a field, or raise HumanInterventionRequired if unsafe/ambiguous."""
+        # Candidate-confirmed answers take priority: the candidate is the authority for their own facts.
+        human = self._human_answer_for(field, job=job)
+        if human is not None:
+            return human
         label_and_name = f"{field.label} {field.name}".strip()
         lower = label_and_name.lower()
 
@@ -212,6 +226,35 @@ class VerifiedFactAnswerer:
                 category="ambiguous_question",
             )
         return answer
+
+    def _human_answer_for(self, field: FormField, *, job: dict | None) -> str | None:
+        """Return a candidate-confirmed answer for this field, or None if none was recorded."""
+        provider = _HUMAN_ANSWER_PROVIDER
+        if provider is None:
+            return None
+        job_id = job.get("id") if isinstance(job, dict) else None
+        try:
+            answers = provider(job_id) or {}
+        except Exception:  # noqa: BLE001
+            return None
+        if not answers:
+            return None
+        target = _norm(f"{field.label} {field.name}")
+        best, best_score = "", 0.0
+        for question, answer in answers.items():
+            qn = _norm(question)
+            if qn == target:
+                best, best_score = answer, 1.0
+                break
+            score = difflib.SequenceMatcher(None, qn, target).ratio()
+            if score > best_score:
+                best, best_score = answer, score
+        if not best or best_score < 0.5:
+            return None
+        if field.field_type in ("checkbox", "radio", "select", "combobox"):
+            # Confirmed consent/selection: check or choose the agreed option.
+            return "sim"
+        return best
 
     def _answer_salary(self, field: FormField, *, job: dict) -> str:
         p = self._profile

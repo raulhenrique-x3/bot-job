@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS application_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_job_id ON application_events(job_id);
+
+CREATE TABLE IF NOT EXISTS human_answers (
+    job_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    answer_token TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'answer',
+    source TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (job_id, question)
+);
 """
 
 _JOB_MIGRATION_COLUMNS = (
@@ -611,3 +622,65 @@ class Database:
             "SELECT status, COUNT(*) AS n FROM applications GROUP BY status"
         ).fetchall()
         return {r["status"]: r["n"] for r in rows}
+
+    # ------------------------------------------------------------------
+    # Candidate-confirmed answers (documentation of human answers)
+    # ------------------------------------------------------------------
+    def record_human_answer(
+        self,
+        job_id: str,
+        question: str,
+        answer: str = "",
+        *,
+        kind: str = "answer",
+        source: str = "",
+        answer_token: str = "",
+    ) -> None:
+        """Store a candidate-confirmed answer for a question (human answers are authoritative)."""
+        now = self._now()
+        self._conn.execute(
+            """INSERT INTO human_answers (job_id, question, answer, answer_token, kind, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(job_id, question) DO UPDATE SET
+                   answer = excluded.answer,
+                   answer_token = excluded.answer_token,
+                   kind = excluded.kind,
+                   source = excluded.source,
+                   updated_at = excluded.updated_at""",
+            (job_id, question, answer, answer_token, kind, source, now),
+        )
+        self.log_event(job_id, "human_answer", f"{question[:80]}")
+
+    def get_human_answers(self, job_id: str) -> dict[str, str]:
+        """Return {question: answer} for candidate-confirmed answers of a job."""
+        rows = self._conn.execute(
+            "SELECT question, answer FROM human_answers WHERE job_id = ? AND kind = 'answer'",
+            (job_id,),
+        ).fetchall()
+        return {r["question"]: r["answer"] for r in rows}
+
+    def get_human_answers_full(self, job_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT job_id, question, answer, answer_token, kind, source, updated_at "
+            "FROM human_answers WHERE job_id = ? ORDER BY question",
+            (job_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reset_app_for_retry(self, job_id: str, *, note: str = "") -> dict:
+        """Reset a pending_human_action application so the cycle re-attempts the submission."""
+        now = self._now()
+        detail = note or "Candidatura reativada a partir da resposta humana confirmada."
+        self._conn.execute(
+            """UPDATE applications
+               SET status = 'documents_ready', failure_reason = '', human_action_reason = ?,
+                   next_retry_at = NULL, notified_at = NULL, updated_at = ?
+               WHERE job_id = ?""",
+            (detail, now, job_id),
+        )
+        self._conn.execute(
+            "UPDATE jobs SET status = 'documents_ready', notified_at = NULL WHERE id = ?",
+            (job_id,),
+        )
+        self.log_event(job_id, "documents_ready", f"reset for retry: {note[:120]}")
+        return self.get_application(job_id) or {}

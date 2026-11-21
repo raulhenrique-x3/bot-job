@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 from bot.appliers import ApplicationDocuments, ApplierRegistry
+from bot.appliers.form_filler import set_human_answer_provider
 from bot.config import (
     ConcurrencyError,
     Settings,
@@ -444,6 +445,7 @@ def _run_cycle(
         },
     )
     db = Database(cfg.database_path)
+    set_human_answer_provider(db.get_human_answers)
     telegram = telegram_override or TelegramClient()
     summary = {
         "collected": 0,
