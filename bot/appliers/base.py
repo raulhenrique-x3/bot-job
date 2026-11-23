@@ -46,7 +46,8 @@ _CONFIRMATION_TEXT_PATTERNS = (
     re.compile(
         r"candidatura enviada|candidatura realizada|candidatura confirmada|candidatura efetuada|"
         r"candidatura registrada|obrigado por se candidatar|recebemos sua candidatura|"
-        r"inscri[cç][aã]o realizada|curr[ií]culo enviado|voc[êe] j[áa] se candidatou|"
+        r"inscri[cç][aã]o realizada|inscri[cç][aã]o feita com sucesso|voc[êe] se inscreveu na vaga|"
+        r"sua inscri[cç][aã]o foi registrada|curr[ií]culo enviado|voc[êe] j[áa] se candidatou|"
         r"sua candidatura foi enviada|parab[ée]ns[,! ]+sua candidatura",
         re.IGNORECASE,
     ),

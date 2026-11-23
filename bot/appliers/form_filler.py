@@ -364,6 +364,8 @@ class VerifiedFactAnswerer:
                 "how did you hear",
                 "hear about this",
                 "como ficou sabendo",
+                "ficou sabendo da vaga",
+                "ficou sabendo das",
                 "como soube da vaga",
                 "como conheceu",
                 "onde encontrou esta vaga",
@@ -379,6 +381,13 @@ class VerifiedFactAnswerer:
                 "querovagas": "QueroVagas",
                 "devagas": "Devagas",
                 "avanade": "Avanade Career Site",
+                "inhire": "Página de Carreiras",
+                "remotive": "Remotive",
+                "himalayas": "Himalayas",
+                "weworkremotely": "We Work Remotely",
+                "jobicy": "Jobicy",
+                "workingnomads": "Working Nomads",
+                "wellfound": "Wellfound",
             }
             is_en = "how did" in lower or "hear about" in lower
             label_src = src_map.get(src, "Company Careers Page" if is_en else "Site de Carreiras da Empresa")

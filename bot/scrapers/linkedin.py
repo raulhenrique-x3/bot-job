@@ -1,10 +1,11 @@
 import logging
 import re
 import time
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
+from bot.appliers.detector import detect_platform
 from bot.config import env_int
 from bot.scrapers.base import JobSource
 
@@ -77,6 +78,7 @@ class LinkedInScraper(JobSource):
         remote_only: bool = True,
         easy_apply_only: bool = True,
         location: str = "Brasil",
+        include_external: bool = False,
     ):
         self._browser = browser
         self._terms = [t.strip() for t in search_terms if t.strip()] or ["desenvolvedor"]
@@ -84,28 +86,34 @@ class LinkedInScraper(JobSource):
         self._remote_only = remote_only
         self._easy_apply_only = easy_apply_only
         self._location = (location or "Brasil").strip()
+        self._include_external = include_external
         self.session_lost = False
 
     def scrape(self) -> list[dict]:
         jobs: list[dict] = []
         max_pages = env_int("MAX_PAGES_PER_PORTAL", 2)
         seen: set[str] = set()
-        for term in self._terms:
-            for page_n in range(1, max_pages + 1):
-                url = self._search_url(term, page_n)
-                html = self._page_html(url)
-                if not html:
-                    break
-                found = self._parse_listing(html)
-                new = [j for j in found if j["id"] not in seen]
-                if not new:
-                    break
-                seen.update(j["id"] for j in new)
-                jobs.extend(new)
-                time.sleep(2.5)
+        passes: list[tuple[bool, int]] = [(self._easy_apply_only, max_pages)]
+        if self._easy_apply_only and self._include_external:
+            # Also collect external ATS listings (e.g. *.inhire.app, Greenhouse, Lever, Ashby)
+            passes.append((False, 1))
+        for easy_apply, pages_limit in passes:
+            for term in self._terms:
+                for page_n in range(1, pages_limit + 1):
+                    url = self._search_url(term, page_n, easy_apply=easy_apply)
+                    html = self._page_html(url)
+                    if not html:
+                        break
+                    found = self._parse_listing(html)
+                    new = [j for j in found if j["id"] not in seen]
+                    if not new:
+                        break
+                    seen.update(j["id"] for j in new)
+                    jobs.extend(new)
+                    time.sleep(2.5)
         return jobs
 
-    def _search_url(self, term: str, page_n: int = 1) -> str:
+    def _search_url(self, term: str, page_n: int = 1, *, easy_apply: bool | None = None) -> str:
         days = min(self._max_days, 14)
         start = (page_n - 1) * 25
         params = [
@@ -115,7 +123,8 @@ class LinkedInScraper(JobSource):
         ]
         if self._remote_only:
             params.append("f_WT=2")
-        if self._easy_apply_only:
+        use_easy = self._easy_apply_only if easy_apply is None else easy_apply
+        if use_easy:
             params.append("f_AL=true")
         params.append(f"start={start}")
         params.append("origin=JOB_SEARCH_PAGE_QUERY")
@@ -283,6 +292,34 @@ class LinkedInScraper(JobSource):
                 body = page.inner_text("body")[:8000]
                 detail["expired"] = bool(_CLOSED_JOB_RE.search(body[:3000]))
                 detail["body"] = body
+                ext_url = self._extract_external_apply_url(page)
+                if ext_url:
+                    detail["apply_url"] = ext_url
         except PWTimeout:
             pass
         return detail
+
+    @staticmethod
+    def _extract_external_apply_url(page) -> str:
+        """Extract direct external ATS URL (e.g. InHire/Greenhouse/Lever) from LinkedIn /safety/go/ CTA."""
+        try:
+            anchors = page.locator("a[href*='/safety/go/']")
+            for i in range(min(anchors.count(), 15)):
+                el = anchors.nth(i)
+                href = el.get_attribute("href") or ""
+                qs = parse_qs(urlparse(href).query)
+                if not qs.get("url"):
+                    continue
+                target = unquote(qs["url"][0]).strip()
+                if not target or "linkedin.com" in target.lower():
+                    continue
+                plat = detect_platform(target)
+                if plat not in ("generic", "linkedin"):
+                    return target
+                txt = (el.inner_text() or "").strip().lower()
+                aria = (el.get_attribute("aria-label") or "").strip().lower()
+                if any(k in f"{txt} {aria}" for k in ("candidatar", "apply")):
+                    return target
+        except Exception:  # noqa: BLE001
+            pass
+        return ""

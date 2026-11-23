@@ -31,7 +31,8 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t]+\n|\n{3,}")
 _ATS_URL_RE = re.compile(
     r"https?://(?:(?:job-)?boards\.greenhouse\.io|jobs\.lever\.co|jobs\.ashbyhq\.com|"
-    r"apply\.workable\.com|jobs\.smartrecruiters\.com)/[^\s\"'<>]+",
+    r"apply\.workable\.com|jobs\.smartrecruiters\.com|"
+    r"[a-z0-9-]+\.inhire\.app/(?:[^/\s\"'<>]+/)?vagas)/[^\s\"'<>]+",
     re.IGNORECASE,
 )
 

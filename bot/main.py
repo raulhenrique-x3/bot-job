@@ -34,6 +34,7 @@ from bot.gemini.analysis import JobAnalyzer, should_apply
 from bot.profile import CandidateProfile, ResumeLibrary
 from bot.scrapers.avanade import DEFAULT_AVANADE_URL, AvanadeScraper
 from bot.scrapers.geekhunter import GeekHunterScraper
+from bot.scrapers.inhire import InHireScraper
 from bot.scrapers.international import (
     HimalayasScraper,
     JobicyScraper,
@@ -98,8 +99,11 @@ def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | No
                 remote_only=env_bool("LINKEDIN_REMOTE_ONLY", True),
                 easy_apply_only=env_bool("LINKEDIN_EASY_APPLY_ONLY", True),
                 location=env("LINKEDIN_LOCATION", "Brasil"),
+                include_external=env_bool("LINKEDIN_INCLUDE_EXTERNAL", True),
             )
         )
+    if env_bool("INHIRE_ENABLED", True):
+        scrapers.append(InHireScraper(remote_only=env_bool("INHIRE_REMOTE_ONLY", True)))
     if env_bool("QUEROVAGAS_ENABLED", True):
         scrapers.append(QueroVagasScraper(browser, work_mode=env("QUEROVAGAS_WORK_MODE", "Remote")))
     if env_bool("NERDIN_ENABLED", True):

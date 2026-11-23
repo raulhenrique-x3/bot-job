@@ -17,7 +17,7 @@ PLATFORM_HOST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("smartrecruiters", ("smartrecruiters.com",)),
     ("bamboohr", ("bamboohr.com",)),
     ("solides", ("solides.jobs", "vagas.solides.com.br")),
-    ("inhire", ("inhire.app",)),
+    ("inhire", ("inhire.app", "carreira.inhire.com.br", "inhire.com.br")),
     ("recruitee", ("recruitee.com",)),
     ("workable", ("apply.workable.com", "workable.com")),
     ("linkedin", ("linkedin.com",)),
@@ -93,7 +93,7 @@ def resolve_apply_url(job: dict, browser_context=None, timeout_ms: int = 25000) 
                     continue
                 candidate = urljoin(final_url, href)
                 cand_platform = detect_platform(candidate, source)
-                if cand_platform in ("greenhouse", "lever", "ashby", "workable", "smartrecruiters", "bamboohr"):
+                if cand_platform in ("greenhouse", "lever", "ashby", "inhire", "gupy", "workable", "smartrecruiters", "bamboohr"):
                     direct_ats_candidate = (candidate, cand_platform)
                     break
                 if apply_link_candidate is None:
