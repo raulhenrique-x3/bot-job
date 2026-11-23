@@ -6,14 +6,20 @@ import html
 from datetime import datetime, timezone
 
 
-def _format_timestamp(iso_ts: str | None) -> str:
-    if not iso_ts:
+def _format_timestamp(iso_ts: str | int | float | None) -> str:
+    if iso_ts is None or iso_ts == "" or isinstance(iso_ts, bool):
         return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     try:
-        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        if isinstance(iso_ts, (int, float)):
+            ts = float(iso_ts)
+            if ts > 1e12:
+                ts /= 1000.0
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(str(iso_ts).replace("Z", "+00:00"))
         return dt.strftime("%Y-%m-%d %H:%M UTC")
-    except ValueError:
-        return iso_ts
+    except (ValueError, TypeError, OSError, OverflowError):
+        return str(iso_ts)
 
 
 def format_job_message(job: dict, analysis: dict) -> str:
@@ -97,6 +103,9 @@ def format_application_notification(job: dict, analysis: dict, application: dict
     elif dry_run and status == "documents_ready":
         header = "<b>🧪 [DRY-RUN] Candidatura simulada e pronta</b>"
         status_label = "documents_ready (simulação — não enviada)"
+    elif job.get("source") == "linkedin_posts" and application.get("platform") == "linkedin_post":
+        header = "<b>📢 Vaga em postagem no LinkedIn (sem e-mail direto)</b>"
+        status_label = "pending_human_action (post LinkedIn)"
     elif status == "pending_human_action":
         header = "<b>⚠️ Intervenção humana necessária</b>"
         status_label = "pending_human_action"
@@ -131,6 +140,24 @@ def format_application_notification(job: dict, analysis: dict, application: dict
         docs.append("Carta de apresentação (PDF)")
     if docs:
         lines.append(f"<b>Documentos anexos:</b> {', '.join(docs)}")
+
+    if application.get("email_to") or application.get("email_subject") or application.get("email_body"):
+        lines.append("")
+        if application.get("email_to"):
+            lines.append(f"<b>E-mail destinatário:</b> <code>{html.escape(str(application['email_to']))}</code>")
+        if application.get("email_subject"):
+            lines.append(f"<b>Assunto:</b> <code>{html.escape(str(application['email_subject']))}</code>")
+        if application.get("email_body"):
+            lines.append(
+                f"<b>Mensagem enviada/gerada:</b>\n<pre>{html.escape(str(application['email_body'])[:1400])}</pre>"
+            )
+
+    if job.get("source") == "linkedin_posts" and job.get("body"):
+        excerpt = " ".join(str(job["body"]).split())[:350]
+        if len(str(job["body"]).strip()) > 350:
+            excerpt += "..."
+        lines.append("")
+        lines.append(f"<b>Trecho da postagem:</b> {html.escape(excerpt)}")
 
     reason = application.get("human_action_reason") or application.get("failure_reason")
     if reason:

@@ -43,6 +43,7 @@ from bot.scrapers.international import (
     WorkingNomadsScraper,
 )
 from bot.scrapers.linkedin import LinkedInScraper, build_profile_search_terms
+from bot.scrapers.linkedin_posts import LinkedInPostsScraper, is_target_role_post
 from bot.scrapers.nerdin import NerdinScraper
 from bot.scrapers.programathor import ProgramathorScraper
 from bot.scrapers.querovagas import QueroVagasScraper
@@ -102,6 +103,8 @@ def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | No
                 include_external=env_bool("LINKEDIN_INCLUDE_EXTERNAL", True),
             )
         )
+    if env_bool("LINKEDIN_POSTS_ENABLED", True):
+        scrapers.append(LinkedInPostsScraper(browser))
     if env_bool("INHIRE_ENABLED", True):
         scrapers.append(InHireScraper(remote_only=env_bool("INHIRE_REMOTE_ONLY", True)))
     if env_bool("QUEROVAGAS_ENABLED", True):
@@ -123,6 +126,30 @@ def build_scrapers(browser, max_age_days: int, *, profile: CandidateProfile | No
     if env_bool("AVANADE_ENABLED", True):
         scrapers.append(AvanadeScraper(search_url=env("AVANADE_SEARCH_URL", DEFAULT_AVANADE_URL)))
     return scrapers
+
+
+def should_apply_or_fast_track_post(job: dict, analysis: dict, threshold: int) -> tuple[bool, str]:
+    """Approve standard high-match roles or fast-track target engineering posts/emails."""
+    ok, reason = should_apply(analysis, threshold=threshold)
+    if ok:
+        return True, ""
+
+    is_post_or_email = (
+        job.get("source") == "linkedin_posts"
+        or (job.get("apply_url") or "").strip().lower().startswith("mailto:")
+    )
+    if not is_post_or_email:
+        return False, reason
+
+    role_blob = f"{job.get('title') or ''}\n{job.get('body') or ''}"
+    if is_target_role_post(role_blob) and passes_pre_filters(job)[0]:
+        analysis["recommendation"] = "apply"
+        analysis["has_eliminatory_blocker"] = False
+        analysis["eliminatory_blockers"] = []
+        analysis["match"] = max(int(analysis.get("match") or 0), threshold)
+        return True, ""
+
+    return False, reason
 
 
 def normalize(job: dict) -> dict:
@@ -340,6 +367,14 @@ def process_application(
     )
 
     # Step 4: Persist final outcome & notify Telegram
+    email_meta: dict[str, str] = {}
+    if outcome.filled_fields.get("to"):
+        email_meta["email_to"] = str(outcome.filled_fields["to"])
+    if outcome.filled_fields.get("subject"):
+        email_meta["email_subject"] = str(outcome.filled_fields["subject"])
+    if outcome.filled_fields.get("email_body"):
+        email_meta["email_body"] = str(outcome.filled_fields["email_body"])
+
     if outcome.status == "applied" or (outcome.dry_run and outcome.status == "documents_ready"):
         app_row = db.record_application_success(
             job_id,
@@ -350,6 +385,7 @@ def process_application(
         )
         if cover_path:
             app_row["cover_letter_path"] = cover_path
+        app_row.update(email_meta)
         msg = format_application_notification(job, analysis, app_row)
         telegram.send_application_bundle(
             msg,
@@ -381,6 +417,7 @@ def process_application(
             human_action_reason=outcome.reason,
             dry_run=dry_run,
         )
+        app_row.update(email_meta)
         msg = format_application_notification(job, analysis, app_row)
         telegram.send_application_bundle(
             msg,
@@ -599,18 +636,22 @@ def _run_cycle(
             db.save_analysis(job["id"], analysis)
             summary["analyzed"] += 1
 
-            ok_to_apply, reject_reason = should_apply(analysis, threshold=cfg.job_match_threshold)
+            ok_to_apply, reject_reason = should_apply_or_fast_track_post(
+                job, analysis, threshold=cfg.job_match_threshold
+            )
             if not ok_to_apply:
                 db.set_status(job["id"], "rejected", reject_reason)
                 summary["rejected"] += 1
                 logger.info("job rejected", extra={"job_id": job["id"], "reason": reject_reason})
-            elif not cfg.auto_apply_enabled:
-                # Classic recommendation-only mode
-                resume_key = analysis.get("resume_key")
-                resume_path = str(resume_library.path_for(resume_key)) if resume_key else None
-                telegram.send_job(format_job_message(job, analysis), resume_path)
-                db.mark_notified(job["id"])
-                summary["notified"] += 1
+            else:
+                db.save_analysis(job["id"], analysis)
+                if not cfg.auto_apply_enabled:
+                    # Classic recommendation-only mode
+                    resume_key = analysis.get("resume_key")
+                    resume_path = str(resume_library.path_for(resume_key)) if resume_key else None
+                    telegram.send_job(format_job_message(job, analysis), resume_path)
+                    db.mark_notified(job["id"])
+                    summary["notified"] += 1
 
         # 6. Automated application stage
         if cfg.auto_apply_enabled and cfg.max_applications_per_run > 0:
@@ -641,7 +682,9 @@ def _run_cycle(
                     analysis = db.get_analysis(job["id"])
                     if not analysis:
                         continue
-                    ok_to_apply, reject_reason = should_apply(analysis, threshold=cfg.job_match_threshold)
+                    ok_to_apply, reject_reason = should_apply_or_fast_track_post(
+                        job, analysis, threshold=cfg.job_match_threshold
+                    )
                     if not ok_to_apply:
                         db.set_status(job["id"], "rejected", reject_reason)
                         summary["rejected"] += 1

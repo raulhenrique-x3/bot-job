@@ -566,6 +566,7 @@ def test_portal_expired_detection_and_devagas_removed():
         "programathor",
         "geekhunter",
         "linkedin",
+        "linkedin_posts",
         "inhire",
         "querovagas",
         "nerdin",

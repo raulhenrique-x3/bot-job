@@ -54,8 +54,16 @@ def detect_platform(url: str, source: str = "") -> str:
 
 def resolve_apply_url(job: dict, browser_context=None, timeout_ms: int = 25000) -> tuple[str, str]:
     """Resolve the direct application URL and detected platform for a job."""
-    url = (job.get("apply_url") or job.get("url") or "").strip()
     source = (job.get("source") or "").strip().lower()
+    raw_apply = (job.get("apply_url") or "").strip()
+    if source == "linkedin_posts" and (
+        not raw_apply
+        or "/recent-activity/" in raw_apply.lower()
+        or "/search/results/" in raw_apply.lower()
+    ):
+        return "", "linkedin_post"
+
+    url = (job.get("apply_url") or job.get("url") or "").strip()
     if not url:
         return "", "generic"
 
@@ -101,7 +109,14 @@ def resolve_apply_url(job: dict, browser_context=None, timeout_ms: int = 25000) 
                         text = (el.inner_text(timeout=500) or "").strip()
                     except Exception:  # noqa: BLE001
                         text = ""
-                    if _APPLY_LINK_TEXT.search(text):
+                    cand_host = (urlparse(candidate).netloc or "").lower()
+                    is_lnkd_outbound = (
+                        "lnkd.in" in (urlparse(final_url).netloc or "").lower()
+                        and candidate.startswith(("http://", "https://"))
+                        and "linkedin.com" not in cand_host
+                        and "lnkd.in" not in cand_host
+                    )
+                    if _APPLY_LINK_TEXT.search(text) or is_lnkd_outbound:
                         apply_link_candidate = (candidate, cand_platform)
 
             if direct_ats_candidate is not None:

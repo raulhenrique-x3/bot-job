@@ -44,6 +44,12 @@ _DEV_CATEGORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_NON_DEV_ROLE_RE = re.compile(
+    r"\b(recruiter|recrutador(?:a)?|recrutamento|talent\s+acquisition|sourcer|"
+    r"human\s+resources|recursos\s+humanos|\brh\b|account\s+executive|\bsdr\b|\bbdr\b)\b",
+    re.IGNORECASE,
+)
+
 
 def _http_get(url: str, *, accept: str = "application/json", timeout: int = 25) -> str | None:
     req = urllib.request.Request(
@@ -84,6 +90,8 @@ def _is_dev_category(*values: str) -> bool:
     combined = " ".join(v for v in values if v).strip()
     if not combined:
         return True
+    if _NON_DEV_ROLE_RE.search(combined):
+        return False
     return bool(_DEV_CATEGORY_RE.search(combined))
 
 

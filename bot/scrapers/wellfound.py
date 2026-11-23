@@ -13,6 +13,7 @@ import html
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -55,6 +56,30 @@ def _stable_wf_id(raw_id: str | int) -> str:
     if clean and len(clean) <= 32:
         return f"wf:{clean}"
     return f"wf:{hashlib.sha1(str(raw_id).encode('utf-8')).hexdigest()[:16]}"
+
+
+def _normalize_posted_at(value: int | float | str | None) -> str | None:
+    """Normalize Wellfound's liveStartAt (Unix seconds/ms or ISO string) to UTC ISO-8601."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            ts = float(value)
+            if ts > 1e12:
+                ts /= 1000.0
+            if ts <= 0:
+                return None
+            return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+        except (ValueError, TypeError, OSError, OverflowError):
+            return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+            return _normalize_posted_at(float(raw))
+        return raw
+    return None
 
 
 def _is_challenge_page(page_html: str) -> bool:
@@ -222,7 +247,7 @@ class WellfoundScraper(JobSource):
                 "remote": remote,
                 "salary": compensation or None,
                 "body": "\n".join(p for p in body_parts if p),
-                "posted_at": val.get("liveStartAt") or None,
+                "posted_at": _normalize_posted_at(val.get("liveStartAt")),
             })
         return jobs
 

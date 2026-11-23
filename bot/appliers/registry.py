@@ -79,6 +79,17 @@ class ApplierRegistry:
             timeout_ms=min(timeout_seconds * 1000, 25000),
         )
         if not apply_url:
+            if (job.get("source") or "").strip().lower() == "linkedin_posts":
+                return ApplicationOutcome(
+                    status="pending_human_action",
+                    platform="linkedin_post",
+                    apply_url=job.get("url") or "",
+                    reason=(
+                        "Vaga identificada em postagem no LinkedIn sem e-mail direto — "
+                        "confira o post e envie o currículo personalizado anexo."
+                    ),
+                    dry_run=dry_run,
+                )
             return ApplicationOutcome(
                 status="pending_human_action",
                 platform=detected or "unknown",

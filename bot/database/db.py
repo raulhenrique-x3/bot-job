@@ -170,7 +170,10 @@ class Database:
         data = dict(job)
         data["company"] = data.get("company") or ""
         data["location"] = data.get("location") or ""
-        data["apply_url"] = data.get("apply_url") or data.get("url") or ""
+        if (data.get("source") or "").strip().lower() == "linkedin_posts":
+            data["apply_url"] = data.get("apply_url") or ""
+        else:
+            data["apply_url"] = data.get("apply_url") or data.get("url") or ""
         return data
 
     def insert_job(self, job: dict) -> None:
@@ -281,7 +284,10 @@ class Database:
         for r in rows:
             d = dict(r)
             by_source.setdefault(d.get("source") or "", []).append(d)
-        sources = sorted(by_source.keys(), key=lambda s: (0 if s == "linkedin" else 1, s))
+        sources = sorted(
+            by_source.keys(),
+            key=lambda s: (0 if s == "linkedin_posts" else 1 if s == "linkedin" else 2, s),
+        )
         result: list[dict] = []
         while len(result) < limit and sources:
             next_sources = []

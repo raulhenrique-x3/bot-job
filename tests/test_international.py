@@ -217,6 +217,7 @@ def test_wellfound_scraper_next_data_dom_fallback_and_applier_registration():
                 "remote": true,
                 "locationNames": ["Remote", "Latin America"],
                 "compensation": "$90k - $120k",
+                "liveStartAt": 1763683200,
                 "description": "<p>Build React + Python systems. LATAM contractor welcome.</p>"
               }
             }
@@ -234,6 +235,8 @@ def test_wellfound_scraper_next_data_dom_fallback_and_applier_registration():
     assert parsed[0]["company"] == "LatamStartup"
     assert parsed[0]["url"] == "https://wellfound.com/company/latam-startup/jobs/98765-senior-fullstack-engineer"
     assert parsed[0]["remote"] is True
+    assert isinstance(parsed[0]["posted_at"], str)
+    assert parsed[0]["posted_at"].startswith("2025-11-21T")
     assert "LATAM contractor" in parsed[0]["body"]
 
     dom_html = '<div><a href="/company/cool-ai/jobs/555111-python-engineer">Python Engineer</a></div>'
@@ -246,4 +249,36 @@ def test_wellfound_scraper_next_data_dom_fallback_and_applier_registration():
     trimmed = _trim_note(long_note, max_chars=100)
     assert len(trimmed) <= 100
     assert trimmed.endswith("...")
+
+
+def test_is_too_old_handles_unix_timestamps_and_malformed_values():
+    from datetime import datetime, timedelta, timezone
+    from bot.filters.filters import is_too_old
+
+    now = datetime.now(timezone.utc)
+    recent_epoch = int((now - timedelta(days=2)).timestamp())
+    old_epoch = int((now - timedelta(days=30)).timestamp())
+    old_epoch_ms = old_epoch * 1000
+
+    assert is_too_old(recent_epoch, max_age_days=14) is False
+    assert is_too_old(old_epoch, max_age_days=14) is True
+    assert is_too_old(old_epoch_ms, max_age_days=14) is True
+    assert is_too_old(str(old_epoch), max_age_days=14) is True
+    assert is_too_old((now - timedelta(days=2)).isoformat().replace("+00:00", "Z"), max_age_days=14) is False
+    assert is_too_old((now - timedelta(days=30)).isoformat(), max_age_days=14) is True
+    assert is_too_old(None, max_age_days=14) is False
+    assert is_too_old("", max_age_days=14) is False
+    assert is_too_old(0, max_age_days=14) is False
+    assert is_too_old(True, max_age_days=14) is False
+    assert is_too_old({"unexpected": 1}, max_age_days=14) is False
+
+
+def test_is_dev_category_filters_non_dev_recruiter_roles():
+    from bot.scrapers.international import _is_dev_category
+
+    assert _is_dev_category("Tech Recruiter") is False
+    assert _is_dev_category("IT Recruiter (RPO) - Tech") is False
+    assert _is_dev_category("Talent Acquisition Partner") is False
+    assert _is_dev_category("Senior Fullstack Engineer") is True
+    assert _is_dev_category("Forward Deployed Engineer") is True
 

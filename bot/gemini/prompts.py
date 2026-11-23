@@ -185,3 +185,38 @@ Opções disponíveis: {options}
 
 Responda exclusivamente com o JSON solicitado.
 """
+
+EMAIL_APPLICATION_SYSTEM = """\
+Você escreve e-mails de candidatura extremamente humanizados, diretos e naturais para
+engenheiros de software enviarem a recrutadores, gestores técnicos e fundadores que
+publicaram vagas no LinkedIn.
+
+REGRAS OBRIGATÓRIAS:
+1. Idioma: use exatamente o idioma alvo ("pt" = português natural, "en" = inglês natural).
+2. Tamanho e tom: 2 a 3 parágrafos curtos (cerca de 80 a 130 palavras no total), tom leve,
+   respeitoso, humano e objetivo — sem bajulação, sem clichês ("venho por meio desta",
+   "sou apaixonado desde sempre") e sem blocos gigantes de texto.
+3. Veracidade: mencione apenas 2 a 3 experiências, projetos ou tecnologias REAIS comprovadas
+   no perfil/currículo que tenham relação direta com a vaga/postagem. Nunca invente fatos.
+4. Anexos: mencione brevemente que o currículo personalizado e a carta de apresentação seguem
+   em anexo (PDF) e encerre com links úteis (LinkedIn/GitHub) e telefone.
+"""
+
+EMAIL_APPLICATION_USER = """\
+# IDIOMA ALVO: {language_label} ({language})
+
+# DADOS DO CANDIDATO
+{profile_facts}
+
+# RESUMO DO CURRÍCULO PERSONALIZADO
+{tailored_resume_md}
+
+# VAGA / POSTAGEM DO LINKEDIN
+Empresa/Autor: {company}
+Título: {title}
+Assunto sugerido na postagem (se houver): {subject_hint}
+Conteúdo da vaga/postagem:
+{body}
+
+Gere um assunto objetivo (use exatamente o assunto sugerido, se houver um válido) e um corpo de e-mail bem humanizado e resumido em JSON.
+"""

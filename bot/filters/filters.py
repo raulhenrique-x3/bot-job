@@ -132,15 +132,38 @@ def content_hash(title: str, company: str) -> str:
     return hashlib.sha1(f"{t}|{c}".encode()).hexdigest()
 
 
-def is_too_old(posted_at: str | None, max_age_days: int) -> bool:
-    if not posted_at:
+def is_too_old(posted_at: str | int | float | None, max_age_days: int) -> bool:
+    if posted_at is None or posted_at == "" or isinstance(posted_at, bool):
         return False
     try:
-        dt = datetime.fromisoformat(posted_at.replace("Z", "+00:00"))
+        dt: datetime
+        if isinstance(posted_at, (int, float)):
+            ts = float(posted_at)
+            if ts > 1e12:
+                ts /= 1000.0
+            if ts <= 0:
+                return False
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        elif isinstance(posted_at, str):
+            raw = posted_at.strip()
+            if not raw:
+                return False
+            if re.fullmatch(r"\d+(?:\.\d+)?", raw):
+                ts = float(raw)
+                if ts > 1e12:
+                    ts /= 1000.0
+                if ts <= 0:
+                    return False
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            else:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        else:
+            return False
+
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) - dt > timedelta(days=max_age_days)
-    except ValueError:
+    except (ValueError, TypeError, OSError, OverflowError):
         return False
 
 
