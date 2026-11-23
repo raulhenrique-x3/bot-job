@@ -54,6 +54,7 @@ _CONFIRMATION_TEXT_PATTERNS = (
     re.compile(
         r"application submitted|application received|thank you for applying|thanks for applying|"
         r"we have received your application|successfully applied|your application has been sent|"
+        r"your application was successfully submitted|successfully submitted|"
         r"you(?:'ve| have) applied|application sent|thanks for your interest",
         re.IGNORECASE,
     ),
@@ -68,11 +69,31 @@ _PRIVACY_TERMS_PATTERNS = (
 
 _ACTIVE_CAPTCHA_TEXT_PATTERNS = (
     re.compile(
-        r"verify you are human|n[ãa]o sou um rob[ôo]|i'?m not a robot|"
+        r"verify you are human|confirm you'?re a human|n[ãa]o sou um rob[ôo]|i'?m not a robot|"
         r"selecione todas as imagens|select all images|complete the security check|"
+        r"verification code was sent to [^\n]+|enter the \d+-character code|"
         r"checking your browser|just a moment\.\.\.",
         re.IGNORECASE,
     ),
+)
+
+_CLOUDFLARE_BLOCK_TEXT_PATTERNS = (
+    re.compile(
+        r"attention required!\s*\|\s*cloudflare|"
+        r"sorry,\s*you have been blocked|"
+        r"cf-browser-verification|"
+        r"checking your browser before accessing|"
+        r"enable javascript and cookies to continue|"
+        r"just a moment\.\.\.",
+        re.IGNORECASE,
+    ),
+)
+
+_CPF_ONLY_RE = re.compile(r"\b(?:cpf|cadastro de pessoa f[ií]sica)\b", re.IGNORECASE)
+_OTHER_SENSITIVE_ID_RE = re.compile(
+    r"\b(?:rg|cnpj|ssn|social security|passport|passaporte|cnh|driver'?s license|"
+    r"data de nascimento|birth\s*date|date of birth|antecedentes|criminal)\b",
+    re.IGNORECASE,
 )
 
 _CONFIRMATION_URL_PATTERNS = (
@@ -222,7 +243,7 @@ def detect_active_captcha_on_page(page) -> str | None:
         pass
 
     try:
-        body_text = page.inner_text("body")[:4000] if page.locator("body").count() else ""
+        body_text = page.inner_text("body")[:12000] if page.locator("body").count() else ""
     except Exception:  # noqa: BLE001
         body_text = ""
 
@@ -257,6 +278,59 @@ def detect_recommendation_letter_request(text: str) -> str | None:
             "Plataforma solicita carta de recomendação de terceiros "
             f"({m.group(0)}). Intervenção humana obrigatória — nunca inventar recomendações."
         )
+    return None
+
+
+def is_cpf_only_field(label: str) -> bool:
+    """Return True when a field asks solely for CPF (without other unverified IDs/birth date)."""
+    return bool(label and _CPF_ONLY_RE.search(label) and not _OTHER_SENSITIVE_ID_RE.search(label))
+
+
+def detect_cloudflare_block(page=None, *, response=None, body_text: str | None = None) -> str | None:
+    """Detect an active Cloudflare block/challenge without false-positiving on third-party 404s."""
+    if response is not None:
+        try:
+            status = int(getattr(response, "status", 0) or 0)
+            headers = {str(k).lower(): str(v).lower() for k, v in (getattr(response, "headers", None) or {}).items()}
+            if status in (403, 503) and ("cloudflare" in headers.get("server", "") or "cf-ray" in headers):
+                return f"Bloqueio Cloudflare detectado (HTTP {status})."
+        except Exception:  # noqa: BLE001
+            pass
+
+    if page is not None:
+        try:
+            if hasattr(page, "evaluate"):
+                cf_hit = page.evaluate(
+                    """() => {
+                        const fr = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+                        if (fr) {
+                            const s = getComputedStyle(fr);
+                            const r = fr.getBoundingClientRect();
+                            if (s.display !== 'none' && s.visibility !== 'hidden' && r.width > 30 && r.height > 20) {
+                                return 'iframe:' + (fr.src || '').slice(0, 70);
+                            }
+                        }
+                        if (document.querySelector('#cf-challenge-running, .cf-browser-verification, #challenge-form')) {
+                            return 'challenge-dom';
+                        }
+                        return '';
+                    }"""
+                )
+                if cf_hit:
+                    return f"Bloqueio Cloudflare ativo detectado ({cf_hit})."
+        except Exception:  # noqa: BLE001
+            pass
+        if body_text is None:
+            try:
+                body_text = page.inner_text("body")[:8000] if page.locator("body").count() else ""
+            except Exception:  # noqa: BLE001
+                body_text = ""
+
+    sample = (body_text or "")[:8000]
+    for pat in _CLOUDFLARE_BLOCK_TEXT_PATTERNS:
+        m = pat.search(sample)
+        if m:
+            return f"Bloqueio Cloudflare detectado ({m.group(0)})."
     return None
 
 

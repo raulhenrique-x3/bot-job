@@ -862,3 +862,456 @@ def test_jobicy_global_resume_upload_ignored_auth_gate_and_safe_close_timeout(tm
     _safe_close_page(_HungPage(), timeout_s=0.15)
     elapsed = time.monotonic() - t0
     assert elapsed < 1.0
+
+
+def test_resolved_form_qa_rules_cpf_spanish_school_history_location_conflict_alerts():
+    from bot.appliers.base import detect_cloudflare_block
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.gemini.prompts import FORM_QA_SYSTEM
+
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+        location="Recife, PE, Brazil",
+        city="Recife",
+        state="PE",
+        country="Brazil",
+        cpf="05609049407",
+        languages=["Português", "Inglês Avançado (C1)", "Espanhol Básico"],
+        skills=[f"Skill{i}" for i in range(120)],
+        education={
+            "school": "Federal Institute of Education, Science and Technology of Pernambuco (IFPE) – Jaboatão Campus",
+            "degree": "Associate Degree in Systems Analysis and Development",
+            "start_date": "02/2022",
+            "end_date": "In progress",
+            "summary": "Associate Degree in Systems Analysis and Development | Federal Institute of Education, Science and Technology of Pernambuco (IFPE) – Jaboatão Campus | 02/2022 – In progress",
+        },
+        profile_markdown="## Experiência\nBSATech — 3 anos e 4 meses.\n## Formação\nIFPE Jaboatão.",
+    )
+    answerer = VerifiedFactAnswerer(profile, allow_ai=False, allow_salary_web=False)
+    job = {"company": "Exadel", "title": "Fullstack Engineer"}
+
+    # 1. Previously employed or contracted by Exadel or subsidiaries
+    assert answerer.answer_field(
+        FormField("prev_exadel", "Have you previously been employed or contracted by Exadel or any of its' subsidiaries?", "combobox", True),
+        job=job,
+    ) == "No"
+
+    # 2. CPF configured in profile -> digits only; empty profile -> HumanInterventionRequired
+    assert answerer.answer_field(
+        FormField("cpf", "Informe seu CPF: (apenas números, sem pontos ou traços)", "text", True),
+        job=job,
+    ) == "05609049407"
+    no_cpf_answerer = VerifiedFactAnswerer(CandidateProfile(full_name="Raul"), allow_ai=False)
+    with pytest.raises(HumanInterventionRequired):
+        no_cpf_answerer.answer_field(FormField("cpf", "CPF", "text", True), job=job)
+
+    # 3. Spanish proficiency -> BASIC
+    assert answerer.answer_field(
+        FormField("spanish", "What is your level of proficiency in Spanish?", "select", True, options=["NONE", "BASIC", "FLUENT"]),
+        job=job,
+    ) == "BASIC"
+
+    # 4 & 5. School with Ashby heavy asterisk ✱ and verified facts always retain education
+    school_ans = answerer.answer_field(FormField("school_name", "School ✱", "text", True), job=job)
+    assert "IFPE" in school_ans and "Associate Degree" in school_ans
+    facts = profile.as_verified_facts_text()
+    assert "Formação acadêmica" in facts[:1500]
+    assert "BSATech" in FORM_QA_SYSTEM
+
+    # 6. opportunityLocationId without Recife falls back to São Paulo (never Brasília just because of "Brazil")
+    loc_opts = [
+        "Select...",
+        "Brasília, Federal District, Brazil",
+        "São Paulo",
+        "Buenos Aires Province",
+        "Bogota,D.C., Capital District",
+    ]
+    assert answerer.answer_field(
+        FormField("opportunityLocationId", "Location", "select", True, options=loc_opts),
+        job=job,
+    ) == "São Paulo"
+
+    # 7. Compliance / Conflict of interest ("I have nothing to declare." + Wellhub/Matchly TCG)
+    assert answerer.answer_field(
+        FormField("decl", "I have nothing to declare.", "radio", True, options=["I have nothing to declare.", "I have conflicts to declare."]),
+        job=job,
+    ) == "I have nothing to declare."
+    wellhub_decl = answerer.answer_field(
+        FormField("coi", "Please declare any conflicts of interest or outside business activities", "textarea", True),
+        job={"company": "Wellhub", "title": "Software Engineer"},
+    )
+    assert "Matchly TCG" in wellhub_decl and "Wellhub" in wellhub_decl
+
+    # 8. Portal alert frequency (non-factual preference)
+    assert answerer.answer_field(
+        FormField("freq", "Selecione a frequência (em dias) de recebimento de alertas:", "select", True, options=["1", "7", "15", "30"]),
+        job=job,
+    ) == "7"
+
+    # 9. Cloudflare response/text detection vs normal 404
+    class _FakeResp:
+        def __init__(self, status: int, headers: dict):
+            self.status = status
+            self.headers = headers
+
+    assert detect_cloudflare_block(response=_FakeResp(403, {"server": "cloudflare", "cf-ray": "123"})) is not None
+    assert detect_cloudflare_block(response=_FakeResp(404, {"server": "nginx"})) is None
+    assert detect_cloudflare_block(body_text="Checking your browser before accessing example.com") is not None
+    assert detect_cloudflare_block(body_text="Apply for this position") is None
+    assert PlaywrightFormFiller is not None
+
+
+def test_dynamic_cta_iframe_and_handtalk_route_resilience(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.scrapers.browser import _BLOCKED_URL_FRAGMENTS
+
+    assert "plugin.handtalk.me" in _BLOCKED_URL_FRAGMENTS
+
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+        location="Recife, PE, Brazil",
+        city="Recife",
+        state="PE",
+        country="Brazil",
+    )
+
+    # 1. Landing page where clicking "Candidatar-se" reveals the form dynamically
+    html_cta = """
+    <html><body>
+      <main>
+        <h1>Engenheiro Fullstack</h1>
+        <button id="open-btn" type="button" onclick="
+          document.getElementById('open-btn').style.display='none';
+          document.getElementById('app-form').style.display='block';
+        ">Candidatar-se</button>
+        <form id="app-form" style="display:none;" onsubmit="event.preventDefault(); document.body.innerHTML='<h1>Candidatura enviada com sucesso!</h1>';">
+          <label for="n">Nome completo *</label><input id="n" name="name" required />
+          <label for="e">E-mail *</label><input id="e" name="email" type="email" required />
+          <label for="loc">opportunityLocationId</label>
+          <select id="loc" name="opportunityLocationId">
+            <option>Select...</option>
+            <option>Brasília, Federal District, Brazil</option>
+            <option>São Paulo</option>
+          </select>
+          <button type="submit">Enviar candidatura</button>
+        </form>
+      </main>
+    </body></html>
+    """
+
+    # 2. Form embedded inside an iframe
+    iframe_inner = """
+    <html><body>
+      <form onsubmit="event.preventDefault(); document.body.innerHTML='<h1>Application submitted</h1>';">
+        <label for="fn">Full Name *</label><input id="fn" name="full_name" required />
+        <label for="em">Email *</label><input id="em" name="email" type="email" required />
+        <button type="submit">Submit application</button>
+      </form>
+    </body></html>
+    """
+    html_iframe = (
+        "<html><body><main><h1>Embedded ATS</h1>"
+        "<iframe name='ats_frame' srcdoc=\""
+        + iframe_inner.replace('"', "&quot;").replace("\n", " ")
+        + "\" style='width:600px;height:400px;'></iframe>"
+        "</main></body></html>"
+    )
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=False, allow_salary_web=False)
+
+        p1 = browser.new_page()
+        p1.set_content(html_cta)
+        out1 = filler.run_on_page(
+            p1,
+            platform="generic",
+            apply_url="https://example.com/jobs/1",
+            job={"id": "g:1", "title": "Fullstack"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=False,
+        )
+        assert out1.status == "applied"
+        assert out1.filled_fields["opportunityLocationId"] == "São Paulo"
+        p1.close()
+
+        p2 = browser.new_page()
+        p2.set_content(html_iframe)
+        out2 = filler.run_on_page(
+            p2,
+            platform="generic",
+            apply_url="https://example.com/jobs/2",
+            job={"id": "g:2", "title": "Fullstack"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=False,
+        )
+        assert out2.status == "applied"
+        assert out2.filled_fields["Full Name *"] == "Raul Henrique"
+        p2.close()
+        browser.close()
+
+
+def test_ai_dom_recovery_handles_html_errors_hidden_ctas_and_custom_buttons(monkeypatch):
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+
+    monkeypatch.setattr("bot.appliers.dom_ai.agy_available", lambda: True)
+    seen_prompts: list[str] = []
+
+    def fake_agy_ask(prompt: str, json_schema=None, **kwargs) -> str:
+        seen_prompts.append(prompt)
+        if "Goal: locate_form_or_apply_cta" in prompt:
+            # Find the custom non-standard CTA div (not matched by _try_open_initial_apply_cta)
+            return json.dumps({
+                "page_status": "needs_click_cta",
+                "diagnosis": "Formulário oculto atrás de botão customizado <div role='button'> e cookie banner.",
+                "apply_cta_selector": "#weird-start-trigger",
+                "dismiss_overlay_selector": "#cookie-close-x",
+                "iframe_selector": "",
+                "next_button_selector": "",
+                "submit_button_selector": "",
+                "target_field_selector": "",
+                "target_field_type": "",
+                "fields": [],
+            })
+        if "Goal: locate_submit_or_next_button" in prompt:
+            # First wizard step has visible #custom-next-div ("Prosseguir"); second has visible #custom-submit-span ("Concluir tudo")
+            if '"id": "custom-next-div"' in prompt:
+                return json.dumps({
+                    "page_status": "multi_step",
+                    "diagnosis": "Botão Next é um <div> customizado.",
+                    "apply_cta_selector": "",
+                    "dismiss_overlay_selector": "",
+                    "iframe_selector": "",
+                    "next_button_selector": "#custom-next-div",
+                    "submit_button_selector": "",
+                    "target_field_selector": "",
+                    "target_field_type": "",
+                    "fields": [],
+                })
+            return json.dumps({
+                "page_status": "form_ready",
+                "diagnosis": "Botão Submit final é um <span> customizado.",
+                "apply_cta_selector": "",
+                "dismiss_overlay_selector": "",
+                "iframe_selector": "",
+                "next_button_selector": "",
+                "submit_button_selector": "#custom-submit-span",
+                "target_field_selector": "",
+                "target_field_type": "",
+                "fields": [],
+            })
+        if "Goal: locate_submit_button" in prompt:
+            return json.dumps({
+                "page_status": "form_ready",
+                "diagnosis": "Botão Submit final é um <span> customizado.",
+                "apply_cta_selector": "",
+                "dismiss_overlay_selector": "",
+                "iframe_selector": "",
+                "next_button_selector": "",
+                "submit_button_selector": "#custom-submit-span",
+                "target_field_selector": "",
+                "target_field_type": "",
+                "fields": [],
+            })
+        return json.dumps({
+            "page_status": "unknown",
+            "diagnosis": "Sem match",
+            "apply_cta_selector": "",
+            "dismiss_overlay_selector": "",
+            "iframe_selector": "",
+            "next_button_selector": "",
+            "submit_button_selector": "",
+            "target_field_selector": "",
+            "target_field_type": "",
+            "fields": [],
+        })
+
+    monkeypatch.setattr("bot.appliers.dom_ai.agy_ask", fake_agy_ask)
+
+    # Non-standard HTML: cookie overlay + <div id="weird-start-trigger"> CTA + <div id="custom-next-div"> + <span id="custom-submit-span">
+    weird_html = """
+    <html><body>
+      <div id="cookie-banner"><button id="cookie-close-x" type="button" onclick="this.parentElement.remove()">Fechar</button></div>
+      <div id="weird-start-trigger" role="button" onclick="
+        this.style.display='none';
+        document.getElementById('step-1').style.display='block';
+      ">Iniciar Processo</div>
+      <div id="step-1" style="display:none;">
+        <label for="f-name">Full Name *</label><input id="f-name" name="name" required />
+        <label for="f-email">Email *</label><input id="f-email" name="email" type="email" required />
+        <div id="custom-next-div" role="button" onclick="
+          document.getElementById('step-1').style.display='none';
+          document.getElementById('step-2').style.display='block';
+        ">Prosseguir &rarr;</div>
+      </div>
+      <div id="step-2" style="display:none;">
+        <label for="f-city">City *</label><input id="f-city" name="city" required />
+        <span id="custom-submit-span" role="button" onclick="
+          document.body.innerHTML='<h1>Application submitted! Protocolo: AI-REC-99</h1>';
+        ">Concluir tudo</span>
+      </div>
+    </body></html>
+    """
+
+    # Also verify unsafe login selector suggested by AI is blocked
+    login_html = "<html><body><a id='bad-login' href='/users/sign_in'>Entrar</a></body></html>"
+
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+        city="Recife",
+        state="PE",
+        country="Brazil",
+    )
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=True, allow_salary_web=False)
+
+        page = browser.new_page()
+        page.set_content(weird_html)
+        outcome = filler.run_on_page(
+            page,
+            platform="generic",
+            apply_url="https://example.com/weird-ats",
+            job={"id": "ai:1", "title": "Fullstack", "company": "Acme"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=False,
+        )
+        assert outcome.status == "applied"
+        assert outcome.confirmation_id == "AI-REC-99"
+        assert len(seen_prompts) >= 2
+        page.close()
+
+        from bot.appliers.dom_ai import resolve_locator
+
+        p_bad = browser.new_page()
+        p_bad.set_content(login_html)
+        assert resolve_locator(p_bad, "#bad-login") is None
+        p_bad.close()
+        browser.close()
+
+
+def test_shadow_dom_transcend_overlay_and_new_tab_redirect(tmp_path):
+    """Ensure Shadow DOM cookie overlays (#transcend-shadow-root) don't block Submit and CTA popups are followed."""
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.appliers.salary import SalaryBudgetEstimator
+
+    # USD salary formatting converts BRL to USD cleanly
+    assert SalaryBudgetEstimator.format_for_field(11400, "Minimum monthly compensation in USD", "") == "2000"
+
+    # Landing page with a CTA button that opens the Airtable-like form in a new tab
+    form_html = """
+    <html><body>
+      <div id="transcend-shadow-root"></div>
+      <script>
+        const host = document.getElementById('transcend-shadow-root');
+        const sr = host.attachShadow({mode: 'open'});
+        sr.innerHTML = `
+          <dialog open style="position:fixed;inset:0;width:100%;height:100%;z-index:999999;background:rgba(0,0,0,0.4);">
+            <button id="tr-reject" type="button" onclick="this.closest('dialog').removeAttribute('open'); this.closest('dialog').style.display='none';">
+              Reject All, Except Strictly Necessary
+            </button>
+          </dialog>`;
+      </script>
+      <div class="sharedFormField required">
+        <div class="title">Full Name *</div>
+        <input type="text" />
+      </div>
+      <div class="sharedFormField required">
+        <div class="title">Email Address *</div>
+        <input type="email" />
+      </div>
+      <div class="sharedFormField required">
+        <div class="title">How did you find us? *</div>
+        <ul role="radiogroup">
+          <li role="radio">LinkedIn Chat</li>
+          <li role="radio" onclick="this.setAttribute('aria-checked','true'); window.__found = true;">LinkedIn Job</li>
+        </ul>
+      </div>
+      <div class="sharedFormField">
+        <div class="title">Additional Notes</div>
+        <div role="textbox" contenteditable="plaintext-only"></div>
+      </div>
+      <button type="button" id="submit-btn" onclick="
+        if (window.__found) {
+          document.body.innerHTML = '<h1>Thank you for applying! Confirmation #RB-101</h1>';
+        }
+      ">Submit</button>
+    </body></html>
+    """
+    landing_html = """
+    <html><body>
+      <a id="open-form-tab" href="about:blank" onclick="
+        event.preventDefault();
+        const w = window.open('https://airtable.local/form', '_blank');
+      ">Apply now</a>
+    </body></html>
+    """
+
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+        city="Recife",
+        state="PE",
+        country="Brazil",
+        currently_employed=False,
+    )
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        ctx.route(
+            "https://airtable.local/form",
+            lambda route: route.fulfill(status=200, content_type="text/html", body=form_html),
+        )
+        # 1. Direct form with Shadow DOM (#transcend-shadow-root) intercepting Submit click
+        page_direct = ctx.new_page()
+        page_direct.set_content(form_html)
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=False, allow_salary_web=False)
+        out_direct = filler.run_on_page(
+            page_direct,
+            platform="generic",
+            apply_url="https://airtable.com/appTest/shrTest",
+            job={"id": "rb:1", "source": "linkedin", "title": "AI-Native Software Engineer", "company": "Right Balance"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=False,
+        )
+        assert out_direct.status == "applied"
+        assert out_direct.confirmation_id == "RB-101"
+        assert out_direct.filled_fields.get("How did you find us? *") == "LinkedIn Job"
+        page_direct.close()
+
+        # 2. Landing page button opening the form in a new tab
+        page_landing = ctx.new_page()
+        page_landing.set_content(landing_html)
+        out_tab = filler.run_on_page(
+            page_landing,
+            platform="generic",
+            apply_url="https://example.com/job/right-balance",
+            job={"id": "rb:2", "source": "linkedin", "title": "AI-Native Software Engineer", "company": "Right Balance"},
+            documents=ApplicationDocuments(resume_pdf="", resume_md=""),
+            dry_run=True,
+        )
+        assert out_tab.status == "documents_ready"
+        assert out_tab.apply_url == "https://airtable.local/form"
+        assert "Full Name *" in out_tab.filled_fields
+        page_landing.close()
+        ctx.close()
+        browser.close()

@@ -83,6 +83,7 @@ _BLOCKED_URL_FRAGMENTS = (
     "crwdcntrl.net",
     "fundingchoicesmessages.google.com",
     "clarity.ms",
+    "plugin.handtalk.me",
 )
 
 
@@ -154,7 +155,11 @@ def goto(browser, url: str, timeout_ms: int = 45000, *, block_heavy_assets: bool
         pass
     ok = True
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        try:
+            page._jobbot_last_response = resp
+        except Exception:  # noqa: BLE001
+            pass
         page.wait_for_timeout(500 if block_heavy_assets else 1500)
     except Exception as exc:  # noqa: BLE001
         logger.warning("goto failed url=%s err=%s", url, exc)

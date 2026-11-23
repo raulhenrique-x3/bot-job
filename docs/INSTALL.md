@@ -54,6 +54,10 @@ Revise `state/profile.json` e `state/profile.md`. Você pode preencher manualmen
 .venv/bin/python -m bot.login programathor
 .venv/bin/python -m bot.login geekhunter
 .venv/bin/python -m bot.login gupy
+.venv/bin/python -m bot.login wellfound
+.venv/bin/python -m bot.login avanade
+.venv/bin/python -m bot.login jobicy              # Login via Google (ambiente com interface gráfica)
+.venv/bin/python -m bot.login jobicy --import-cookies  # Login via Google em VPS headless (sem display)
 ```
 
 As sessões são salvas em `state/auth_*.json` com permissão restrita `0600` (e ignoradas pelo `.gitignore`).

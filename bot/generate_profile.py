@@ -132,6 +132,8 @@ def main() -> int:
         "availability_days",
         "currently_employed",
         "current_company",
+        "cpf",
+        "education",
     ):
         if existing_json.get(manual_key) not in (None, ""):
             merged[manual_key] = existing_json[manual_key]

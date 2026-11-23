@@ -116,6 +116,11 @@ def _smart_truncate(text: str, max_chars: int) -> str:
     return text[:max_chars]
 
 
+def smart_truncate(text: str, max_chars: int) -> str:
+    """Public helper to truncate text while preserving tail sections (skills/education)."""
+    return _smart_truncate(text, max_chars)
+
+
 def infer_resume_language(key: str, text: str = "") -> str:
     """Infer whether a resume key/text is in Portuguese ('pt') or English ('en')."""
     kl = (key or "").lower()
@@ -237,8 +242,48 @@ class CandidateProfile:
     availability_days: int | None = None
     currently_employed: bool | None = None
     current_company: str = ""
+    area_preference: str = ""
+    has_disability: bool | None = None
+    race_ethnicity: str = ""
+    sexual_orientation: str = ""
+    gender_identity: str = ""
+    cpf: str = ""
+    education: dict | str = ""
     profile_markdown: str = ""
     raw: dict = field(default_factory=dict)
+
+    @property
+    def education_summary(self) -> str:
+        if isinstance(self.education, dict):
+            summary = str(self.education.get("summary") or "").strip()
+            if summary:
+                return summary
+            parts = [
+                str(self.education.get("degree") or "").strip(),
+                str(self.education.get("school") or "").strip(),
+                " – ".join(
+                    p
+                    for p in (
+                        str(self.education.get("start_date") or "").strip(),
+                        str(self.education.get("end_date") or "").strip(),
+                    )
+                    if p
+                ),
+            ]
+            return " | ".join(p for p in parts if p)
+        return str(self.education or "").strip()
+
+    @property
+    def education_school(self) -> str:
+        if isinstance(self.education, dict):
+            return str(self.education.get("school") or "").strip()
+        return ""
+
+    @property
+    def education_degree(self) -> str:
+        if isinstance(self.education, dict):
+            return str(self.education.get("degree") or "").strip()
+        return ""
 
     def to_dict(self) -> dict:
         return {
@@ -271,6 +316,13 @@ class CandidateProfile:
             "availability_days": self.availability_days,
             "currently_employed": self.currently_employed,
             "current_company": self.current_company,
+            "area_preference": self.area_preference,
+            "has_disability": self.has_disability,
+            "race_ethnicity": self.race_ethnicity,
+            "sexual_orientation": self.sexual_orientation,
+            "gender_identity": self.gender_identity,
+            "cpf": self.cpf,
+            "education": self.education,
         }
 
     def as_verified_facts_text(self) -> str:
@@ -300,6 +352,7 @@ class CandidateProfile:
             ("Senioridade", self.seniority),
             ("Anos de experiência", self.years_of_experience),
             ("Idiomas", ", ".join(self.languages) if self.languages else ""),
+            ("Formação acadêmica", self.education_summary),
             ("Skills principais", ", ".join(self.skills) if self.skills else ""),
             (
                 "Experiência específica por tecnologia",
@@ -404,6 +457,17 @@ class CandidateProfile:
                 else None
             ),
             current_company=str(merged.get("current_company") or "").strip(),
+            area_preference=str(merged.get("area_preference") or "").strip(),
+            has_disability=(
+                merged.get("has_disability")
+                if isinstance(merged.get("has_disability"), bool)
+                else None
+            ),
+            race_ethnicity=str(merged.get("race_ethnicity") or "").strip(),
+            sexual_orientation=str(merged.get("sexual_orientation") or "").strip(),
+            gender_identity=str(merged.get("gender_identity") or "").strip(),
+            cpf=str(merged.get("cpf") or "").strip(),
+            education=merged.get("education") if isinstance(merged.get("education"), (dict, str)) else "",
             profile_markdown=md_text,
             raw=merged,
         )

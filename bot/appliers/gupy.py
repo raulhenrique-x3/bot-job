@@ -10,6 +10,7 @@ from bot.appliers.base import (
     detect_active_captcha_on_page,
     detect_mfa_or_auth_wall,
 )
+from bot.appliers.dom_ai import ask_ai_dom_recovery, resolve_locator, try_dismiss_overlay
 from bot.appliers.form_filler import PlaywrightFormFiller
 from bot.profile import CandidateProfile
 
@@ -105,6 +106,23 @@ class GupyApplier(PlatformApplier):
                         dry_run=dry_run,
                     )
 
+            if page.locator("input:not([type='hidden']), textarea, select").count() == 0:
+                ai_gupy = ask_ai_dom_recovery(
+                    page,
+                    goal="locate_form_or_apply_cta",
+                    error_context="Nenhum input detectado na Gupy após tentativa padrão de Candidatar-se.",
+                    job=job,
+                )
+                if ai_gupy:
+                    if ai_gupy.get("dismiss_overlay_selector"):
+                        try_dismiss_overlay(page, ai_gupy["dismiss_overlay_selector"])
+                    alt_cta = resolve_locator(page, ai_gupy.get("apply_cta_selector") or "")
+                    if alt_cta is not None:
+                        try:
+                            alt_cta.click(timeout=5000)
+                            page.wait_for_timeout(2000)
+                        except Exception:  # noqa: BLE001
+                            pass
             if page.locator("input:not([type='hidden']), textarea, select").count() == 0:
                 return ApplicationOutcome(
                     status="pending_human_action",

@@ -15,6 +15,7 @@ from bot.appliers.base import (
     detect_mfa_or_auth_wall,
     detect_submission_confirmation,
 )
+from bot.appliers.dom_ai import ask_ai_dom_recovery, resolve_locator, try_dismiss_overlay
 from bot.appliers.form_filler import PlaywrightFormFiller
 from bot.profile import CandidateProfile
 
@@ -114,6 +115,27 @@ class LinkedInApplier(PlatformApplier):
 
             # Find Apply / Easy Apply CTA strictly in priority order (never matching job titles or description links)
             apply_btn, is_easy = self._find_apply_button(page)
+            if apply_btn is None:
+                ai_cta = ask_ai_dom_recovery(
+                    page,
+                    goal="locate_apply_cta",
+                    error_context="Botão Apply / Candidatura Simplificada não encontrado no LinkedIn.",
+                    job=job,
+                )
+                if ai_cta:
+                    if ai_cta.get("dismiss_overlay_selector"):
+                        try_dismiss_overlay(page, ai_cta["dismiss_overlay_selector"])
+                    alt_cta = resolve_locator(page, ai_cta.get("apply_cta_selector") or "")
+                    if alt_cta is not None:
+                        apply_btn = alt_cta
+                        try:
+                            txt_blob = (
+                                f"{alt_cta.inner_text(timeout=300) or ''} "
+                                f"{alt_cta.get_attribute('aria-label', timeout=300) or ''}"
+                            ).lower()
+                            is_easy = "simplificada" in txt_blob or "easy apply" in txt_blob
+                        except Exception:  # noqa: BLE001
+                            is_easy = False
             if apply_btn is None:
                 return ApplicationOutcome(
                     status="pending_human_action",

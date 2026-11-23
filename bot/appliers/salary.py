@@ -7,6 +7,7 @@ Never fabricates candidate history or exceeds configured limits.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -185,25 +186,43 @@ class SalaryBudgetEstimator:
 
     @staticmethod
     def format_for_field(amount_brl: int, field_label: str = "", placeholder: str = "", field_type: str = "text") -> str:
-        """Format salary value cleanly according to the target HTML input's period (hour/month/year) and mask."""
+        """Format salary value cleanly according to currency (BRL/USD), period (hour/month/year), and mask."""
         ph = (placeholder or "").strip()
         lbl = (field_label or "").lower()
 
-        value = amount_brl
+        is_usd = bool(
+            re.search(r"\b(usd|us\$|d[oó]lar(?:es)?)\b", lbl)
+            or ("$" in ph and "r$" not in ph.lower() and "r$" not in lbl)
+        )
+        value: float = float(amount_brl)
+        if is_usd:
+            try:
+                usd_brl = max(2.0, float(os.getenv("USD_BRL_RATE", "5.7") or 5.7))
+            except ValueError:
+                usd_brl = 5.7
+            value = amount_brl / usd_brl
+
         # Convert monthly rate to hourly (~168h/month) or annual (12x) if the field asks for it
         if re.search(r"\b(hora|hourly|por hora|valor[- ]?hora|/h)\b", lbl) or re.search(r"\b(hora|hourly|/h)\b", ph.lower()):
-            value = max(35, int(round((amount_brl / 168.0) / 5.0) * 5))
+            step = 5.0
+            floor = 10 if is_usd else 35
+            out_val = max(floor, int(round((value / 168.0) / step) * step))
         elif re.search(r"\b(anual|annual|yearly|per year|/ano)\b", lbl):
-            value = amount_brl * 12
+            step = 500.0
+            out_val = int(round((value * 12) / step) * step) if is_usd else int(value * 12)
+        elif is_usd:
+            out_val = max(100, int(round(value / 50.0) * 50))
+        else:
+            out_val = int(value)
 
         if field_type == "number":
-            return str(value)
+            return str(out_val)
         if "0,00" in ph or "0,00" in lbl:
             # Brazilian currency masked inputs (e.g. GeekHunter R$ 0,00): digits including cents
-            return f"{value},00"
+            return f"{out_val},00"
         if "r$" in ph.lower() or "r$" in lbl:
-            return f"{value:,}".replace(",", ".")
-        return str(value)
+            return f"{out_val:,}".replace(",", ".")
+        return str(out_val)
 
     @staticmethod
     def _heuristic_baseline(

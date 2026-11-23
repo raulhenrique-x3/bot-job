@@ -40,6 +40,7 @@ from bot.appliers.base import (
     detect_submission_confirmation,
     is_cover_letter_label,
 )
+from bot.appliers.dom_ai import ask_ai_dom_recovery, resolve_locator, try_dismiss_overlay
 from bot.appliers.form_filler import PlaywrightFormFiller, VerifiedFactAnswerer, _norm
 from bot.profile import CandidateProfile
 
@@ -549,6 +550,23 @@ class AvanadeApplier(PlatformApplier):
                 )
 
             nav_btn = page.locator("button[data-automation-id='bottom-navigation-next-button']").first
+            if nav_btn.count() == 0:
+                ai_nav = ask_ai_dom_recovery(
+                    page,
+                    goal="locate_submit_or_next_button",
+                    error_context=f"Botão bottom-navigation-next-button não encontrado na etapa '{step_name}' do Workday.",
+                    job=job,
+                    allow_ai=allow_ai,
+                )
+                if ai_nav:
+                    if ai_nav.get("dismiss_overlay_selector"):
+                        try_dismiss_overlay(page, ai_nav["dismiss_overlay_selector"])
+                    alt_nav = resolve_locator(
+                        page,
+                        ai_nav.get("next_button_selector") or ai_nav.get("submit_button_selector") or "",
+                    )
+                    if alt_nav is not None:
+                        nav_btn = alt_nav
             if nav_btn.count() == 0:
                 break
 

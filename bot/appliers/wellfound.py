@@ -21,6 +21,7 @@ from bot.appliers.base import (
     detect_mfa_or_auth_wall,
     detect_submission_confirmation,
 )
+from bot.appliers.dom_ai import ask_ai_dom_recovery, resolve_locator, try_dismiss_overlay
 from bot.profile import CandidateProfile
 
 logger = logging.getLogger("jobbot.appliers.wellfound")
@@ -146,6 +147,19 @@ class WellfoundApplier(PlatformApplier):
                 "button:has-text('Apply')"
             ).first
             if apply_btn.count() == 0:
+                ai_cta = ask_ai_dom_recovery(
+                    page,
+                    goal="locate_apply_cta",
+                    error_context="Botão Apply não encontrado na página da Wellfound.",
+                    job=job,
+                )
+                if ai_cta:
+                    if ai_cta.get("dismiss_overlay_selector"):
+                        try_dismiss_overlay(page, ai_cta["dismiss_overlay_selector"])
+                    alt_cta = resolve_locator(page, ai_cta.get("apply_cta_selector") or "")
+                    if alt_cta is not None:
+                        apply_btn = alt_cta
+            if apply_btn.count() == 0:
                 return ApplicationOutcome(
                     status="pending_human_action",
                     platform=self.platform_name,
@@ -235,6 +249,24 @@ class WellfoundApplier(PlatformApplier):
                 "button:has-text('Submit application'), "
                 "button:has-text('Send Application')"
             ).first
+            if submit_btn.count() == 0:
+                ai_sub = ask_ai_dom_recovery(
+                    page,
+                    goal="locate_submit_button",
+                    error_context="Botão final de envio ('Send application') não encontrado no modal da Wellfound.",
+                    job=job,
+                    scope_selector="[role='dialog']",
+                )
+                if ai_sub:
+                    if ai_sub.get("dismiss_overlay_selector"):
+                        try_dismiss_overlay(page, ai_sub["dismiss_overlay_selector"])
+                    alt_sub = resolve_locator(
+                        page,
+                        ai_sub.get("submit_button_selector") or "",
+                        scope_selector="[role='dialog']",
+                    )
+                    if alt_sub is not None:
+                        submit_btn = alt_sub
             if submit_btn.count() == 0:
                 return ApplicationOutcome(
                     status="pending_human_action",

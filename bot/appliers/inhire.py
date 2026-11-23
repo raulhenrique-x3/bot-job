@@ -25,7 +25,9 @@ from bot.appliers.base import (
     detect_sensitive_or_legal_field,
     detect_submission_confirmation,
     is_cover_letter_label,
+    is_cpf_only_field,
 )
+from bot.appliers.dom_ai import ask_ai_dom_recovery, resolve_locator, try_dismiss_overlay
 from bot.appliers.form_filler import PlaywrightFormFiller, VerifiedFactAnswerer
 from bot.appliers.salary import SalaryBudgetEstimator
 from bot.profile import CandidateProfile
@@ -397,14 +399,25 @@ class InHireApplier(PlatformApplier):
             )
 
         if inspection.blocker_reason:
-            return ApplicationOutcome(
-                status="pending_human_action",
-                platform=self.platform_name,
-                apply_url=apply_url,
-                reason=inspection.blocker_reason,
-                cover_letter_requested=inspection.cover_letter_requested,
-                dry_run=dry_run,
+            cpf_only_ok = (
+                inspection.blocker_category == "legal_or_sensitive"
+                and bool(profile.cpf)
+                and bool(inspection.fields)
+                and all(
+                    is_cpf_only_field(f.label) or not detect_sensitive_or_legal_field(f.label)
+                    for f in inspection.fields
+                    if f.required
+                )
             )
+            if not cpf_only_ok:
+                return ApplicationOutcome(
+                    status="pending_human_action",
+                    platform=self.platform_name,
+                    apply_url=apply_url,
+                    reason=inspection.blocker_reason,
+                    cover_letter_requested=inspection.cover_letter_requested,
+                    dry_run=dry_run,
+                )
 
         cover_pdf = documents.cover_letter_pdf
         cover_text = documents.cover_letter_text
@@ -583,6 +596,20 @@ class InHireApplier(PlatformApplier):
             )
 
         submit_btn = job_form.locator("button[type='submit']").first
+        if submit_btn.count() == 0:
+            ai_sub = ask_ai_dom_recovery(
+                page,
+                goal="locate_submit_button",
+                error_context="Botão de envio não encontrado no formulário InHire.",
+                job=job,
+                allow_ai=allow_ai,
+            )
+            if ai_sub:
+                if ai_sub.get("dismiss_overlay_selector"):
+                    try_dismiss_overlay(page, ai_sub["dismiss_overlay_selector"])
+                alt_sub = resolve_locator(page, ai_sub.get("submit_button_selector") or "")
+                if alt_sub is not None:
+                    submit_btn = alt_sub
         if submit_btn.count() == 0:
             return ApplicationOutcome(
                 status="pending_human_action",
