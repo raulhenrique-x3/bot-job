@@ -803,3 +803,61 @@ def test_linkedin_apply_cta_priority_and_sdui_avaliar_radio_wizard(tmp_path):
         assert out_live.status == "applied"
         p3.close()
         browser.close()
+
+
+def test_jobicy_global_resume_upload_ignored_auth_gate_and_safe_close_timeout(tmp_path):
+    import time
+    from playwright.sync_api import sync_playwright
+
+    from bot.appliers.form_filler import PlaywrightFormFiller
+    from bot.scrapers.browser import _safe_close_page
+
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4\ntest")
+    profile = CandidateProfile(
+        full_name="Raul Henrique",
+        first_name="Raul",
+        last_name="Henrique",
+        email="raul@example.com",
+    )
+
+    jobicy_html = """
+    <html><body>
+      <div id="resume_upload_inner_block" class="job_listing banner-special">
+        <input type="file" id="global_resume_upload_input" accept=".pdf,.docx" style="display: none;">
+      </div>
+      <main>
+        <button type="button" id="jv-open-apply-auth">Apply Now</button>
+      </main>
+    </body></html>
+    """
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page()
+        page.set_content(jobicy_html)
+        assert PlaywrightFormFiller._extract_fields(page) == []
+
+        filler = PlaywrightFormFiller(profile, allow_ai_qa=False, allow_salary_web=False)
+        out = filler.run_on_page(
+            page,
+            platform="generic",
+            apply_url="https://jobicy.com/jobs/153741-senior-software-enginner-full-stack-node-react",
+            job={"id": "jc:153741", "title": "Senior Engineer", "company": "Airtm"},
+            documents=ApplicationDocuments(resume_pdf=str(pdf), resume_md=""),
+            dry_run=False,
+        )
+        assert out.status == "pending_human_action"
+        assert "Jobicy" in out.reason
+        assert out.filled_fields == {}
+        page.close()
+        browser.close()
+
+    class _HungPage:
+        def close(self):
+            time.sleep(2.0)
+
+    t0 = time.monotonic()
+    _safe_close_page(_HungPage(), timeout_s=0.15)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0

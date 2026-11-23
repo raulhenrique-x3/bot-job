@@ -802,6 +802,19 @@ class PlaywrightFormFiller:
                     dry_run=dry_run,
                 )
 
+        try:
+            url_blob = f"{current_url} {apply_url}".lower()
+            if "jobicy.com" in url_blob and page.locator("#jv-open-apply-auth").count() > 0:
+                return ApplicationOutcome(
+                    status="pending_human_action",
+                    platform=platform,
+                    apply_url=apply_url if current_url == "about:blank" else current_url,
+                    reason="Portal agregador (Jobicy) exige login/cadastro próprio para revelar o link externo da vaga.",
+                    dry_run=dry_run,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
         resume_excerpt = ""
         if documents.resume_md and Path(documents.resume_md).exists():
             resume_excerpt = Path(documents.resume_md).read_text(encoding="utf-8")[:3500]
@@ -1110,7 +1123,7 @@ class PlaywrightFormFiller:
     @staticmethod
     def _extract_fields(page: Any, *, scope_selector: str | None = None) -> list[FormField]:
         js = r"""(scopeSel) => {
-            const IGNORE_NOISE = /(newsletter|cookie|consent|analytics|ads|search|busca|pesquisa|password|senha|login|signin|beecatcher|robots only|g-recaptcha-response|h-captcha-response|cf-turnstile-response)/i;
+            const IGNORE_NOISE = /(newsletter|cookie|consent|analytics|ads|search|busca|pesquisa|password|senha|login|signin|beecatcher|robots only|g-recaptcha-response|h-captcha-response|cf-turnstile-response|global_resume_upload|resume_upload_inner_block|banner-special)/i;
             document.querySelectorAll('[data-jobbot-field]').forEach(e => e.removeAttribute('data-jobbot-field'));
             document.querySelectorAll('[data-jobbot-radio-group]').forEach(e => {
                 e.removeAttribute('data-jobbot-radio-group');
@@ -1171,9 +1184,12 @@ class PlaywrightFormFiller:
                 if (['hidden', 'submit', 'button', 'reset', 'image', 'search'].includes(type)) continue;
                 if (el.disabled) continue;
 
-                // Exclude header/nav/footer/cookie-banner inputs unless inside a chosen modal scope
+                // Exclude header/nav/footer/cookie-banner/sidebar-promo inputs unless inside a chosen modal scope
                 if (!scopeSel) {
                     if (el.closest('header, nav, footer')) continue;
+                    if (el.closest('#resume_upload_inner_block, .banner-special, aside') && !el.closest('form')) {
+                        continue;
+                    }
                     const banner = el.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i]');
                     if (banner && banner !== el && !(type === 'checkbox' && el.closest('form'))) {
                         continue;
@@ -1307,7 +1323,7 @@ class PlaywrightFormFiller:
                 }
 
                 const noiseCheck = `${el.id || ''} ${el.name || ''} ${el.getAttribute('data-automation-id') || ''} ${label}`;
-                if (type !== 'file' && IGNORE_NOISE.test(noiseCheck)) {
+                if (IGNORE_NOISE.test(noiseCheck)) {
                     // Allow privacy/terms/LGPD consent checkbox even if id/name/label contains "consent" or "cookies"
                     if (!(type === 'checkbox' && /(privacidade|privacy|termos|terms|lgpd|tratamento dos meus dados|concordo)/i.test(label))) {
                         continue;

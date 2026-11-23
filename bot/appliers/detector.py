@@ -112,12 +112,13 @@ def resolve_apply_url(job: dict, browser_context=None, timeout_ms: int = 25000) 
                 if cand_platform != "generic":
                     return cand_url, cand_platform
                 # Follow one redirect hop for aggregator outbound links (e.g. /go/, /apply)
-                try:
-                    page.goto(cand_url, wait_until="domcontentloaded", timeout=min(timeout_ms, 15000))
-                    hop_url = page.url or cand_url
-                    return hop_url, detect_platform(hop_url, source)
-                except Exception:  # noqa: BLE001
-                    return cand_url, cand_platform
+                if cand_url.split("#", 1)[0].rstrip("/") != final_url.split("#", 1)[0].rstrip("/"):
+                    try:
+                        page.goto(cand_url, wait_until="domcontentloaded", timeout=min(timeout_ms, 15000))
+                        hop_url = page.url or cand_url
+                        return hop_url, detect_platform(hop_url, source)
+                    except Exception:  # noqa: BLE001
+                        return cand_url, cand_platform
     except Exception as exc:  # noqa: BLE001
         logger.debug("resolve_apply_url fallback for %s: %s", url, exc)
 
